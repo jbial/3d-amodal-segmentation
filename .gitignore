@@ -1,0 +1,15 @@
+.ipynb_checkpoints/*
+figures/*
+saved_models/*
+wandb/*
+logs/*
+outputs/*
+datasets/*
+data/*
+*.log
+*.pyc
+*.ipynb
+.hydra/*
+.vscode/*
+__pycache__/*
+**/.DS_Store

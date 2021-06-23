@@ -1,0 +1,19 @@
+model:
+
+  # name for saving
+  prefix: mlp
+
+  # activation function
+  activation: relu
+
+  depth: 4
+  dim:
+    input: 2
+    hidden: 50
+    output: 1
+
+  # fourier features parameters
+  use_fourier_feats: False
+  num_ffeats: 8
+  scale: 1
+

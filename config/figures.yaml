@@ -1,0 +1,7 @@
+filenames:
+
+  training: figures/loss_acc.png
+  predictions: figures/predictions.png
+  surface: figures/surface.png
+  scatter: figures/scatter.png
+  heatmap: figures/heatmap.png
