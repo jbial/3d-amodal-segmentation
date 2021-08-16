@@ -9,6 +9,7 @@ import numpy as np
 import detectron2.data.detection_utils as utils
 import detectron2.data.transforms as T
 
+from .registry import SceneRegister
 
 """
 Directive: INCOMPLETE
@@ -17,6 +18,12 @@ Directive: INCOMPLETE
     [+] Using the registered dataset, load images and other data for input to model
     [+] Can put any key u want in dataset_dict object
 """
+# ---------------------------------------------------------------------------------
+# for now, hand-register the train and test sets
+scene = SceneRegister("data/tonya_mcs_1")
+for name in ["sailvos_train", "sailvos_test"]:
+    scene.register(name)
+# ---------------------------------------------------------------------------------
 
 
 class Amodal3DMapper:
@@ -58,7 +65,7 @@ class Amodal3DMapper:
 
         H, W = dataset_dict["height"], dataset_dict["width"]
         annos = [self.transform_annotation(anno) for anno in dataset_dict.pop("annotations")]
-        instances = utils.annotations_to_instances(annos, (H, W))
+        instances = utils.annotations_to_instances(annos, (H, W), mask_format='bitmask')
         dataset_dict["instances"] = instances[instances.gt_boxes.nonempty()]
 
         return dataset_dict
@@ -70,9 +77,8 @@ class Amodal3DMapper:
         # read and encode instance mask
         bitmask = utils.read_image(annotation["mask_filename"])
         encoded_mask = pycocotools.mask.encode(
-            np.array((bitmask/255).prod(axis=-1).astype('uint8'), order='F')
+            np.array((bitmask/255).astype('bool'), order='F')
         )
-        
         annotation["segmentation"] = encoded_mask
 
         return annotation

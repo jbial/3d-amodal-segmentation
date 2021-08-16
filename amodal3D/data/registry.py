@@ -47,10 +47,6 @@ class SceneRegister:
         # metadata
         self.obj2id, self.id2obj = self.object_id_map()
 
-        # for now, hand-register the train and test sets
-        for name in ["sailvos_train", "sailvos_test"]:
-            self.register(name)
-
     def _extract_filenames(self):
         """Read all relevant filenames from the scene
         """
@@ -73,7 +69,8 @@ class SceneRegister:
         )
 
         visible_classes = np.load(f"{self.dataroot}/visible_objects.npy")
-        self.cat_id_dict = {ID:i for i, ID in enumerate(visible_classes)}
+        # exclude 0 class, assume visible objects file is presorted
+        self.cat_id_dict = {ID:i for i, ID in enumerate(visible_classes[1:])}
 
         # get range matrices for every frame by checking objects for every frame
         self.num_frames = min([
@@ -136,7 +133,7 @@ class SceneRegister:
                 "timestamp": timestamp,
                 "depth_filename": '/'.join(depth_file.split('/')[-2:]),
                 "camera_filename": '/'.join(cam_filename.split('/')[-2:]),
-                "range_filename": '/'.join(rng_filename.split('/')[-2:])
+                "range_filename": '/'.join(rng_filename.split('/')[-4:])
             }
 
             # process all objects present in image
@@ -238,12 +235,12 @@ class SceneRegister:
     def register(self, dataset_name):
         """Register the SAILVOS dataset
         """
+        datadict = self.load_sailvos(dataset_name)
         DatasetCatalog.register(
-            dataset_name, lambda: self.load_sailvos(dataset_name)
+            dataset_name, lambda: datadict
         )
 
         metadata = {
-            "thing_classes": ['_'.join(o.split('_')[1:]) for o in self.obj2id.keys()],
             "thing_dataset_id_to_contiguous_id": self.cat_id_dict,
             "thing_colors": list(range(len(self.cat_id_dict))),
         }

@@ -3,7 +3,7 @@ figures/*
 saved_models/*
 wandb/*
 logs/*
-outputs/*
+output/*
 datasets/*
 data/*
 *.log

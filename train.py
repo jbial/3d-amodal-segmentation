@@ -1,7 +1,6 @@
 """Training script for 3D amodal segmentation model
 """
 import detectron2.utils.comm as comm
-import amodal3D.modeling  
 
 from collections import OrderedDict
 from detectron2.checkpoint import DetectionCheckpointer
@@ -48,7 +47,7 @@ def setup(args):
     # TODO: implement,
     amodal3d_cfg_defaults(cfg)
 
-    #cfg.merge_from_file(args.config_file)
+    cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
     cfg.freeze()
     default_setup(cfg, args)
@@ -73,8 +72,6 @@ def main(args):
     trainer = Trainer(cfg)
 
     loader = trainer.build_train_loader(cfg)
-    print("Loaded loader")
-
     trainer.resume_or_load(resume=args.resume)
     return trainer.train()
 
