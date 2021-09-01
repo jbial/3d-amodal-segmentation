@@ -14,8 +14,10 @@ from detectron2.engine import DefaultTrainer, default_argument_parser, default_s
 from detectron2.evaluation import inference_on_dataset
 from detectron2.utils.logger import setup_logger
 
+from amodal3D.modeling import ProjectionRCNN
 from amodal3D.config import amodal3d_cfg_defaults  
 from amodal3D.data import Amodal3DMapper
+import amodal3D.modeling
 
 
 class Trainer(DefaultTrainer):
@@ -45,7 +47,7 @@ def setup(args):
     cfg = get_cfg()
 
     # TODO: implement,
-    amodal3d_cfg_defaults(cfg)
+    cfg = amodal3d_cfg_defaults(cfg)
 
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
@@ -70,7 +72,12 @@ def main(args):
         return res
 
     trainer = Trainer(cfg)
+    
+    # testing
+    model = trainer.build_model(cfg)
 
+    trainloader = trainer.build_train_loader(cfg)
+    
     loader = trainer.build_train_loader(cfg)
     trainer.resume_or_load(resume=args.resume)
     return trainer.train()
