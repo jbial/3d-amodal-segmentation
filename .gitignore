@@ -5,6 +5,7 @@ wandb/*
 logs/*
 output/*
 datasets/*
+notebooks/*
 data/*
 *.log
 *.pyc
