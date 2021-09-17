@@ -19,160 +19,177 @@ from tqdm import tqdm
 logger = logging.getLogger(__name__)
 
 
-"""
-Directive: INCOMPLETE
-
-    [+] Create class loading filenames
-    [+] implement __call__ to return the records for each record
-    [+] data registry must be light-weight -> optimize heavily
-    [+] Store filenames ONLY (depth, visibles, img, etc)
-    [+] Okay to load camera intrinsics and range matrices, share I/O load with mapper
-    [+] register the dataset thru an import
-    [+] think about how to form the validation set/deal with multiple scenes (consult with alex)
-        
-"""
 class SceneRegister:
-    """Processes scene filenames and data into JSON format
-    """
 
-    def __init__(self, dataroot, frame_stride=3):
+    def __init__(self, dataroot, window_size=5, frame_strides=[1,2,3,4,5]):
+        """Processes scene filenames and data into JSON format
+        """
+        # extract all paths to scene directories
         self.dataroot = dataroot
+        self.scene_re = re.compile("^[a-zA-Z0-9_-]+$")
+        self.scene_dirs =list(map(
+            lambda s: f"{dataroot}/{s}", 
+            filter(self.scene_re.match, os.listdir(dataroot))
+        ))
 
-        # for train/test split
-        self.frame_stride = frame_stride
+        # hardcoded (property of dataset)
+        self.H, self.W = 800, 1280  
+
+        # for frame/sequence sampling
+        self.window_size = window_size
+        self.frame_strides = frame_strides
 
         # extract all the filenames for the scene
-        self._extract_filenames()
+        self.scene_data = [self._extract_filenames(scene) for scene in self.scene_dirs]
 
-        # metadata
-        self.obj2id, self.id2obj = self.object_id_map()
+        # extract labels (bit convoluted)
+        label_re = re.compile("([A-Za-z])([A-Za-z\_]+)([A-Za-z])")
+        self.label_map = lambda s: label_re.search(s).group(0)
+        self.labels = set(map(
+            self.label_map, 
+            [label.split('/')[-1] for scene in self.scene_dirs for label in glob.glob(f"{scene}/[0-9]*")]
+        ))
+        self.idx2label = {i:l for i, l in enumerate(self.labels)}
+        self.label2idx = {l:i for i, l in enumerate(self.labels)}
 
-    def _extract_filenames(self):
+    def _extract_filenames(self, scene_path):
         """Read all relevant filenames from the scene
         """
-        camera_folder = f"{self.dataroot}/camera"
-        new_depth_folder = f"{self.dataroot}/depth"
-        image_folder = f"{self.dataroot}/images"
-        visible_folder = f"{self.dataroot}/visible"
+        camera_folder = f"{scene_path}/camera"
+        new_depth_folder = f"{scene_path}/depth"
+        image_folder = f"{scene_path}/images"
+        visible_folder = f"{scene_path}/visible"
 
         # get data folders
-        self.obj_folders = glob.glob(f"{self.dataroot}/[0-9]*")
-        self.cam_matrices = glob.glob(f"{camera_folder}/*.yaml")
-        self.depth_maps = glob.glob(f"{new_depth_folder}/*.npy")
-        self.images = glob.glob(f"{image_folder}/*.bmp")
-        self.visibles = glob.glob(f"{visible_folder}/*.npy")
+        obj_folders = glob.glob(f"{scene_path}/[0-9]*")
+        cam_matrices = glob.glob(f"{camera_folder}/*.yaml")
+        depth_maps = glob.glob(f"{new_depth_folder}/*.npy")
+        images = glob.glob(f"{image_folder}/*.bmp")
+        visibles = glob.glob(f"{visible_folder}/*.npy")
 
-        all_range_matrices = [f for obj in self.obj_folders for f in glob.glob(f"{obj}/*mesh/draw*/rage*")]
-        self.range_matrices = list(
+        # get range matrices for every frame by checking objects for every frame
+        all_range_matrices = [f for obj in obj_folders for f in glob.glob(f"{obj}/*mesh/draw*/rage*")]
+        range_matrices = list(
             set({re.split('/|_mesh', f)[-4]:f \
                  for f in all_range_matrices}.values())
         )
+        visible_classes = np.load(f"{scene_path}/visible_objects.npy")
 
-        visible_classes = np.load(f"{self.dataroot}/visible_objects.npy")
-        # exclude 0 class, assume visible objects file is presorted
-        self.cat_id_dict = {ID:i for i, ID in enumerate(visible_classes[1:])}
-
-        # get range matrices for every frame by checking objects for every frame
-        self.num_frames = min([
-            len(self.cam_matrices),
-            len(self.depth_maps),
-            len(self.images),
-            len(self.visibles)
-        ])
+        num_frames = min(map(len, [images, visibles, depth_maps, cam_matrices]))
+        logger.info(f"{scene_path} contains {num_frames} frames.")
 
         # segmentation mask filename for every object sorted by frame
-        self.object_masks = []
+        object_masks = []
         frame_id =  lambda f: re.split('/|\.', f)[-2]
-        for obj in self.obj_folders:
+        for obj in obj_folders:
             filenames = sorted(glob.glob(f"{obj}/*.png"), key=frame_id)
             frame_ids = [int(frame_id(file)) for file in filenames]
-            self.object_masks.append(dict(zip(frame_ids, filenames)))
+            object_masks.append(dict(zip(frame_ids, filenames)))
 
         # sort range matrix files
-        self.range_matrices.sort(key=lambda f: re.split('/|_mesh', f)[-4])
-        self.cam_matrices.sort(key=lambda f: re.split('/|\.', f)[-2])
-        self.depth_maps.sort(key=lambda f: re.split('/|\.', f)[-2])
-        self.images.sort(key=lambda f: re.split('/|\.', f)[-2])
-        self.visibles.sort(key=lambda f: re.split('/|\.', f)[-2])
+        range_matrices.sort(key=lambda f: re.split('/|_mesh', f)[-4])
+        cam_matrices.sort(key=lambda f: re.split('/|\.', f)[-2])
+        depth_maps.sort(key=lambda f: re.split('/|\.', f)[-2])
+        images.sort(key=lambda f: re.split('/|\.', f)[-2])
+        visibles.sort(key=lambda f: re.split('/|\.', f)[-2])
 
-    def object_id_map(self):
-        """Gets object->ID and ID->object mapping
-        """
-        names = [d[list(d.keys())[0]].split('/')[-2] for d in self.object_masks]
-        id_name_map = {i: name for i, name in enumerate(names)}
-        return {v:k for k, v in id_name_map.items()}, id_name_map
+        return {
+            "images": images,
+            "depth_maps": depth_maps,
+            "cameras": cam_matrices,
+            "visibles": visibles,
+            "range_matrices": range_matrices,
+            "annotations": object_masks,
+            "num_frames": num_frames,
+            "visible_classes": visible_classes
+        }
+
+    def rolling_window(self, arr, stride=1):
+        shape = arr.shape[:-1] + (arr.shape[-1] - self.window_size + 1 - stride + 1, self.window_size)
+        strides = arr.strides + (arr.strides[-1] * stride,)
+        return np.lib.stride_tricks.as_strided(arr, shape=shape, strides=strides)
 
     def _extract_datadicts(self, dataset_name):
         """Extracts dict objects for the images and annotations to be written to a JSON file
+
+        TODO: write train/test split logic
         """
         logger.info("Preprocessing dataset filenames and metadata into JSON format")
+        path_parser = lambda fn, idx: '/'.join(fn.split('/')[-idx:])
 
-        imgs = []
+        slices = []
+        for i, scene in tqdm(enumerate(self.scene_dirs), desc="Parsing scene data"):
 
-        # strided sampling of frames for training and testing
-        if "test" in dataset_name:
-            it = range(0, self.num_frames, self.frame_stride) 
-        else:
-            it = [i for i in range(self.num_frames) if i not in range(0, self.num_frames, self.frame_stride)]
+            # unpack data
+            scene_data = self.scene_data[i]
+            num_frames = scene_data["num_frames"]
+            images = scene_data["images"]
+            depth_maps = scene_data["depth_maps"]
+            cameras = scene_data["cameras"]
+            range_matrices = scene_data["range_matrices"]
+            visibles = scene_data["visibles"]
+            annotations = scene_data["annotations"]
+            visible_classes = scene_data["visible_classes"]
 
-        for timestamp in tqdm(it, desc='Processing data into JSON format'):
+            frames = np.arange(num_frames)
+            strided_sequences = [self.rolling_window(frames, stride=fs) for fs in self.frame_strides]
 
-            # process the image + depth image
-            img_filename = self.images[timestamp]
-            depth_file = self.depth_maps[timestamp]
-            height, width = cv2.imread(img_filename).shape[:2]
+            for j, sequences in enumerate(strided_sequences):
+                for seq in tqdm(sequences, desc=f"Extracting [window_size={self.window_size}, stride={self.frame_strides[j]}]", leave=True):
+                    if seq[-1] - seq[-2] != self.frame_strides[j]:
+                        continue
 
-            # ...and camera matrices
-            cam_filename = self.cam_matrices[timestamp]
-            rng_filename = self.range_matrices[timestamp]
+                    # get every pathname for each data-type
+                    img_filenames = list(map(lambda fn: path_parser(fn, 2), [images[ts] for ts in seq]))
+                    depth_filenames = list(map(lambda fn: path_parser(fn, 2), [depth_maps[ts] for ts in seq]))
+                    cam_filenames = list(map(lambda fn: path_parser(fn, 2), [cameras[ts] for ts in seq]))
+                    range_filenames = list(map(lambda fn: path_parser(fn, 4), [range_matrices[ts] for ts in seq]))
+                    vis_filenames = list(map(lambda fn: path_parser(fn, 2), [visibles[ts] for ts in seq]))
 
-            img_obj = {
-                "filename": '/'.join(img_filename.split('/')[-2:]),
-                "height": height,
-                "width": width,
-                "timestamp": timestamp,
-                "depth_filename": '/'.join(depth_file.split('/')[-2:]),
-                "camera_filename": '/'.join(cam_filename.split('/')[-2:]),
-                "range_filename": '/'.join(rng_filename.split('/')[-4:])
-            }
+                    img_obj = {
+                        "image_filenames": img_filenames,
+                        "depth_filenames": depth_filenames,
+                        "camera_filenames": cam_filenames,
+                        "range_filenames": range_filenames,
+                        "visible_filenames": vis_filenames,
+                        # metadata
+                        "scene_name": scene,
+                        "height": self.H,
+                        "width": self.W,
+                        "start": int(seq[0]),
+                        "end": int(seq[-1]),
+                        "stride": int(self.frame_strides[j])
+                    }
 
-            # process all objects present in image
-            visible_fname = self.visibles[timestamp]
+                    annos = []
+                    for obj in annotations:
+                        if seq[self.window_size // 2] not in obj.keys():
+                            continue
 
-            annos = []
-            for obj in self.object_masks:
-                if timestamp not in obj.keys():
-                    continue
+                        # central frame in the window serves as the annotation
+                        obj_file = obj[seq[self.window_size // 2]]
+                        bitmask = cv2.imread(obj_file)
+                        anno = {
+                            "mask_filename": path_parser(obj_file, 2),
+                            "bbox": cv2.boundingRect(np.argwhere(bitmask != 0)[:, :2]),
+                            "category_id": self.label2idx[self.label_map(obj_file.split('/')[-2])]
+                        }
+                        annos.append(anno)
+                    img_obj["annotations"] = annos
 
-                # otherwise check if it is visible and get annotations
-                obj_file = obj[timestamp]
-                obj_id = int(obj_file.split('/')[-2].split('_')[0])
-                bitmask = cv2.imread(obj_file)
+                    slices.append(img_obj)
 
-                anno = {
-                    "mask_filename": '/'.join(obj_file.split('/')[-2:]),
-                    "bbox": cv2.boundingRect(np.argwhere(bitmask != 0)[:, :2]),
-                    "category_id": obj_id
-                }
-                annos.append(anno)
-
-            img_obj["visible_filename"] = '/'.join(visible_fname.split('/')[-2:])
-            img_obj["annotations"] = annos
-
-            imgs.append(img_obj)
-
-        return imgs
+        return slices
 
     def _json_data(self, dataset_name):
         """Returns the JSON objects containing the image and annotation data. Writes them to file if they dont exist
         """
-        json_file = f"{self.dataroot}/{dataset_name}_images.json"
+        json_file = f"{self.dataroot}/{dataset_name}.json"
         if not os.path.isfile(json_file): 
             logging.info("JSON data files not yet created. Creating now (you only need to do this once).")
-
             imgs_json = self._extract_datadicts(dataset_name)
 
-            # write the image and annotation JSONs
+            # write the image and annotation JSON files
             with open(json_file, 'w') as f:
                 json.dump(imgs_json, f)
 
@@ -197,32 +214,32 @@ class SceneRegister:
 
         # create the catalog
         meta = MetadataCatalog.get(dataset_name)
-        meta.thing_classes = list(self.obj2id.keys())
-        meta.thing_dataset_id_to_contiguous_id = self.cat_id_dict
+        meta.thing_classes = list(self.label2idx)
 
         # create the Detectron2 dataset
         logger.info(f"Creating dataset {dataset_name}")
         dataset_dicts = []
         for img_dict in image_json:
-
             record = {
-                f"{field}filename": os.path.join(self.dataroot, img_dict[f"{field}filename"]) \
-                for field in ["", "depth_", "camera_", "range_"]
+                f"{field}_filenames": map(lambda f: os.path.join(self.dataroot, f), img_dict[f"{field}_filenames"])
+                for field in ["image", "depth", "camera", "range", "visible"]
             }
 
+            # additional metadata
             record.update({
                 "height": img_dict["height"],
                 "width": img_dict["width"],
-                "timestamp": img_dict["timestamp"],
-                "visible_filename": os.path.join(self.dataroot, img_dict["visible_filename"])
+                "start": img_dict["start"],
+                "end": img_dict["end"],
+                "stride": img_dict["stride"],
+                "scene_name": img_dict["scene_name"]
             })
 
-            # create the formatted annotations
             annos = [
                 {
                     "mask_filename": os.path.join(self.dataroot, anno["mask_filename"]),
                     "bbox": anno["bbox"],
-                    "category_id": self.cat_id_dict[anno["category_id"]],
+                    "category_id": anno["category_id"],
                     "bbox_mode": BoxMode.XYWH_ABS
                 } for anno in img_dict["annotations"]
             ]
@@ -240,17 +257,25 @@ class SceneRegister:
             dataset_name, lambda: datadict
         )
 
-        metadata = {
-            "thing_dataset_id_to_contiguous_id": self.cat_id_dict,
-            "thing_colors": list(range(len(self.cat_id_dict))),
-        }
+        metadata = {"thing_colors": list(self.idx2label)}
         MetadataCatalog.get(dataset_name).set(image_root=self.dataroot, **metadata)
         
     
 if __name__ == '__main__':
     """For testing the SAILVOS dataloader
     """
+    from pprint import pprint
+
     meta = MetadataCatalog.get("SAILVOS")
-    s = SceneRegister("datasets/tonya_mcs_1")
+    s = SceneRegister("data", window_size=3, frame_strides=[100])
 
+    # pprint(s.scene_data[0]["annotations"])
+    pprint(s.idx2label)
+    pprint(s.label2idx)
 
+    # test the initial extraction
+    # datadicts = s._extract_datadicts("sailvos")
+    # pprint(datadicts[-1])
+
+    # test registration
+    s.register("sailvos")

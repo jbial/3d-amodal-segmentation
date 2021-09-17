@@ -19,8 +19,8 @@ Directive: INCOMPLETE
     [+] Can put any key u want in dataset_dict object
 """
 # ---------------------------------------------------------------------------------
-# for now, hand-register the train and test sets
-scene = SceneRegister("data/tonya_mcs_1")
+# hand-register the train and test sets
+scene = SceneRegister("data")
 for name in ["sailvos_train", "sailvos_test"]:
     scene.register(name)
 # ---------------------------------------------------------------------------------
