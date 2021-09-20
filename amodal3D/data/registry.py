@@ -8,10 +8,7 @@ import cv2
 import json
 import numpy as np
 
-from detectron2.data import (
-    MetadataCatalog,
-    DatasetCatalog
-)
+from detectron2.data import MetadataCatalog, DatasetCatalog
 from detectron2.structures import BoxMode
 from detectron2.utils.file_io import PathManager
 from tqdm import tqdm
@@ -19,11 +16,13 @@ from tqdm import tqdm
 logger = logging.getLogger(__name__)
 
 
-class SceneRegister:
+class SceneDataset:
 
-    def __init__(self, dataroot, window_size=5, frame_strides=[1,2,3,4,5]):
+    def __init__(self, dataroot, train_val_split=0.8, window_size=5, frame_strides=[1,2,3,4,5]):
         """Processes scene filenames and data into JSON format
         """
+        self.train_val_split = train_val_split
+
         # extract all paths to scene directories
         self.dataroot = dataroot
         self.scene_re = re.compile("^[a-zA-Z0-9_-]+$")
@@ -51,6 +50,9 @@ class SceneRegister:
         ))
         self.idx2label = {i:l for i, l in enumerate(self.labels)}
         self.label2idx = {l:i for i, l in enumerate(self.labels)}
+
+        # create the dataset and store on disk
+        self._split_and_write()
 
     def _extract_filenames(self, scene_path):
         """Read all relevant filenames from the scene
@@ -109,10 +111,8 @@ class SceneRegister:
         strides = arr.strides + (arr.strides[-1] * stride,)
         return np.lib.stride_tricks.as_strided(arr, shape=shape, strides=strides)
 
-    def _extract_datadicts(self, dataset_name):
+    def _extract_datadicts(self):
         """Extracts dict objects for the images and annotations to be written to a JSON file
-
-        TODO: write train/test split logic
         """
         logger.info("Preprocessing dataset filenames and metadata into JSON format")
         path_parser = lambda fn, idx: '/'.join(fn.split('/')[-idx:])
@@ -181,27 +181,41 @@ class SceneRegister:
 
         return slices
 
-    def _json_data(self, dataset_name):
-        """Returns the JSON objects containing the image and annotation data. Writes them to file if they dont exist
+    def _split_and_write(self, dataset_name="sailvos"):
+        """Creates data set, splits into train/val and writes to JSON
         """
-        json_file = f"{self.dataroot}/{dataset_name}.json"
-        if not os.path.isfile(json_file): 
-            logging.info("JSON data files not yet created. Creating now (you only need to do this once).")
-            imgs_json = self._extract_datadicts(dataset_name)
+        filenames = [f"{self.dataroot}/{dataset_name}_{mode}.json" for mode in ["train", "val"]]
+        if all(os.path.isfile(fn) for fn in filenames):  # dont extract
+            return
 
+        logger.info("Extracting, splitting, and writing to JSON")
+        datadicts = self._extract_datadicts()
+
+        # randomly split into train and test
+        N, partition = len(datadicts), int(self.train_val_split * len(datadicts))
+        indices = np.random.permutation(N)
+        train_inds, test_inds = indices[:partition], indices[partition:]
+
+        for inds, name in zip([train_inds, test_inds], filenames):
             # write the image and annotation JSON files
-            with open(json_file, 'w') as f:
-                json.dump(imgs_json, f)
+            with open(name, 'w') as f:
+                json.dump([datadicts[i] for i in inds], f)
 
-            return imgs_json
+        logger.info(f"Wrote data to {filenames}")
 
-        # load the JSON dicts if they already exist as files
-        with open(json_file, 'r') as f:
-            imgs_json = json.load(f)
 
-        return imgs_json
+class SceneRegister(SceneDataset):
 
-    def load_sailvos(self, dataset_name="SAILVOS"):
+    def __init__(self, dataroot, train_val_split=0.8, window_size=5, frame_strides=[1]):
+        super().__init__(dataroot, train_val_split=train_val_split, window_size=window_size, frame_strides=frame_strides)
+        self.dataroot = dataroot
+
+    def _read_json_data(self, dataset_name):
+        with open(f"{self.dataroot}/{dataset_name}.json", 'r') as f:
+            datadicts = json.load(f)
+        return datadicts
+
+    def __call__(self, dataset_name):
         """Load preprocessed JSON dataset and create dataset for SAILVOS scene(s)
 
         Args:
@@ -210,29 +224,27 @@ class SceneRegister:
         Returns:
             list[dict]: SAILVOS data in Detectron2 format
         """
-        image_json = self._json_data(dataset_name)
+        datadicts = self._read_json_data(dataset_name)
 
-        # create the catalog
-        meta = MetadataCatalog.get(dataset_name)
-        meta.thing_classes = list(self.label2idx)
+        print(self.label2idx)
 
         # create the Detectron2 dataset
         logger.info(f"Creating dataset {dataset_name}")
         dataset_dicts = []
-        for img_dict in image_json:
+        for data in datadicts:
             record = {
-                f"{field}_filenames": map(lambda f: os.path.join(self.dataroot, f), img_dict[f"{field}_filenames"])
+                f"{field}_filenames": map(lambda f: os.path.join(self.dataroot, f), data[f"{field}_filenames"])
                 for field in ["image", "depth", "camera", "range", "visible"]
             }
 
             # additional metadata
             record.update({
-                "height": img_dict["height"],
-                "width": img_dict["width"],
-                "start": img_dict["start"],
-                "end": img_dict["end"],
-                "stride": img_dict["stride"],
-                "scene_name": img_dict["scene_name"]
+                "height": data["height"],
+                "width": data["width"],
+                "start": data["start"],
+                "end": data["end"],
+                "stride": data["stride"],
+                "scene_name": data["scene_name"]
             })
 
             annos = [
@@ -241,41 +253,47 @@ class SceneRegister:
                     "bbox": anno["bbox"],
                     "category_id": anno["category_id"],
                     "bbox_mode": BoxMode.XYWH_ABS
-                } for anno in img_dict["annotations"]
+                } for anno in data["annotations"]
             ]
             record["annotations"] = annos
-
             dataset_dicts.append(record)
 
         return dataset_dicts
-
-    def register(self, dataset_name):
-        """Register the SAILVOS dataset
-        """
-        datadict = self.load_sailvos(dataset_name)
-        DatasetCatalog.register(
-            dataset_name, lambda: datadict
-        )
-
-        metadata = {"thing_colors": list(self.idx2label)}
-        MetadataCatalog.get(dataset_name).set(image_root=self.dataroot, **metadata)
         
-    
+
+def register_sailvos(dataroot, dataset_name):
+    registry = SceneRegister(
+        dataroot, 
+        window_size=5, 
+        frame_strides=[1,2,4,8], 
+        train_val_split=0.8
+    )
+    DatasetCatalog.register(
+        dataset_name, lambda: registry(dataset_name)
+    )
+    metadata = {"thing_colors": list(registry.idx2label), "thing_classes": list(registry.label2idx)}
+    MetadataCatalog.get(dataset_name).set(
+        json_file=f"{registry.dataroot}/{dataset_name}.json", image_root=dataroot, **metadata
+    )
+
+
+if __name__.endswith("registry"):
+    for ds_name in ["sailvos_train"]:
+        if ds_name in DatasetCatalog.list():
+            DatasetCatalog.remove(ds_name)
+        register_sailvos("data", ds_name)
+
+
 if __name__ == '__main__':
     """For testing the SAILVOS dataloader
     """
     from pprint import pprint
 
     meta = MetadataCatalog.get("SAILVOS")
-    s = SceneRegister("data", window_size=3, frame_strides=[100])
+    s = SceneDataset("data", window_size=3, frame_strides=[100])
 
     # pprint(s.scene_data[0]["annotations"])
     pprint(s.idx2label)
     pprint(s.label2idx)
 
-    # test the initial extraction
-    # datadicts = s._extract_datadicts("sailvos")
-    # pprint(datadicts[-1])
-
-    # test registration
-    s.register("sailvos")
+    sr = SceneRegister()

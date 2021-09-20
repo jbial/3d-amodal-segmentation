@@ -1,4 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
+from amodal3D.modeling.projection_backbone import ProjectionBackbone
 import logging
 import numpy as np
 from typing import Dict, List, Optional, Tuple
@@ -96,6 +97,9 @@ class ProjectionRCNN(nn.Module):
             batched_inputs (list): a list that contains input to the model.
             proposals (list): a list that contains predicted proposals. Both
                 batched_inputs and proposals should have the same length.
+
+        TODO:
+            Update this
         """
         from detectron2.utils.visualizer import Visualizer
 
@@ -154,7 +158,7 @@ class ProjectionRCNN(nn.Module):
 
         # feed in the inputs
         projs = [list(l) for l in zip(*[
-            (x["depth_map"].to(self.device),
+            (x["depth_maps"].to(self.device),
              x["K"].to(self.device),
              x["Rt"].to(self.device),
              x["gproj"].to(self.device))
@@ -162,7 +166,6 @@ class ProjectionRCNN(nn.Module):
         ])]
 
         depth_maps, K, Rt, gproj = [ImageList.from_tensors(x) for x in projs]
-
         features = self.backbone(images.tensor, depth_maps.tensor, K.tensor, Rt.tensor, gproj.tensor)
 
         if self.proposal_generator is not None:
@@ -225,7 +228,7 @@ class ProjectionRCNN(nn.Module):
 
         if do_postprocess:
             assert not torch.jit.is_scripting(), "Scripting is not supported for postprocess."
-            return GeneralizedRCNN._postprocess(results, batched_inputs, images.image_sizes)
+            return ProjectionBackbone._postprocess(results, batched_inputs, images.image_sizes)
         else:
             return results
 
@@ -233,7 +236,7 @@ class ProjectionRCNN(nn.Module):
         """
         Normalize, pad and batch the input images.
         """
-        images = [x["image"].to(self.device) for x in batched_inputs]
+        images = [x["images"].to(self.device) for x in batched_inputs]
         images = [(x - self.pixel_mean) / self.pixel_std for x in images]
         images = ImageList.from_tensors(images, self.backbone.size_divisibility)
         return images

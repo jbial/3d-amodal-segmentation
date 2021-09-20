@@ -1,29 +1,13 @@
 """Parse SAILVOS data into detectron2 format
 """
 import yaml
-import copy
-import logging
 import torch
 import pycocotools
 import numpy as np
 import detectron2.data.detection_utils as utils
 import detectron2.data.transforms as T
 
-from .registry import SceneRegister
-
-"""
-Directive: INCOMPLETE
-    
-    [+] most heavy lifting done here
-    [+] Using the registered dataset, load images and other data for input to model
-    [+] Can put any key u want in dataset_dict object
-"""
-# ---------------------------------------------------------------------------------
-# hand-register the train and test sets
-scene = SceneRegister("data")
-for name in ["sailvos_train", "sailvos_test"]:
-    scene.register(name)
-# ---------------------------------------------------------------------------------
+from detectron2.data import MetadataCatalog, DatasetCatalog
 
 
 class Amodal3DMapper:
@@ -45,19 +29,18 @@ class Amodal3DMapper:
         """
         # TODO: incorporate data augmentation and transforms
 
-        image = utils.read_image(dataset_dict["filename"])
-        depth_map = np.load(dataset_dict["depth_filename"])
-        visibles = np.load(dataset_dict["visible_filename"])
-        range_matrix = self._range_proj_matrix(dataset_dict["range_filename"])
-        K, Rt = self._camera_matrices(dataset_dict["camera_filename"])
+        images = np.array([utils.read_image(img) for img in dataset_dict["image_filenames"]])
+        depth_maps = np.array([np.load(depth) for depth in dataset_dict["depth_filenames"]])
+        visibles = np.array([np.load(vis) for vis in dataset_dict["visible_filename"]])
+        range_matrices = np.array([self._range_proj_matrix(rng) for rng in dataset_dict["range_filename"]])
+        Ks, Rts = [np.array(l) for l in zip(*[self._camera_matrices(cams) for cams in dataset_dict["camera_filename"]])]
 
-        # store image in CHW format and depth map
-        dataset_dict["image"] = torch.as_tensor(image.transpose(2, 0, 1).astype('float32'))
-        dataset_dict["depth_map"] = torch.as_tensor(depth_map)
-        dataset_dict["K"] = torch.tensor(K)
-        dataset_dict["Rt"] = torch.tensor(Rt)
-        dataset_dict["gproj"] = torch.tensor(range_matrix)
-        dataset_dict["visibles"] = torch.tensor(visibles)
+        dataset_dict["images"] = torch.as_tensor(images.transpose(0, 3, 1, 2)).float()
+        dataset_dict["depth_maps"] = torch.as_tensor(depth_maps).float()
+        dataset_dict["gproj"] = torch.as_tensor(range_matrices).float()
+        dataset_dict["visibles"] = torch.as_tensor(visibles).float()
+        dataset_dict["K"] = torch.as_tensor(Ks).float()
+        dataset_dict["Rt"] = torch.as_tensor(Rts).float()
 
         if not self.is_train:
             dataset_dict.pop("annotations", None)
@@ -74,13 +57,12 @@ class Amodal3DMapper:
         """
         Apply tranforms on the annotations (TODO) and read in the binary masks
         """
-        # read and encode instance mask
+        # read and encode instance mask for segmentation label
         bitmask = utils.read_image(annotation["mask_filename"])
         encoded_mask = pycocotools.mask.encode(
             np.array((bitmask/255).astype('bool'), order='F')
         )
         annotation["segmentation"] = encoded_mask
-
         return annotation
 
     def _camera_matrices(self, cam_file):
@@ -100,5 +82,3 @@ class Amodal3DMapper:
         """
         rangemat = np.fromfile(range_file, dtype='float32').reshape((4, 4, 4))
         return np.linalg.inv(rangemat[1, :, :]) @ rangemat[2, :, :]
-
-
