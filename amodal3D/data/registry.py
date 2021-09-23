@@ -10,15 +10,17 @@ import numpy as np
 
 from detectron2.data import MetadataCatalog, DatasetCatalog
 from detectron2.structures import BoxMode
-from detectron2.utils.file_io import PathManager
+import detectron2.data.detection_utils as utils
 from tqdm import tqdm
+from detectron2.config import get_cfg
+from ..config import amodal3d_cfg_defaults  
 
 logger = logging.getLogger(__name__)
 
 
-class SceneDataset:
+class SAILVOSDataset:
 
-    def __init__(self, dataroot, train_val_split=0.8, window_size=5, frame_strides=[1,2,3,4,5]):
+    def __init__(self, dataroot, train_val_split=0.8, window_size=5, frame_strides=[1]):
         """Processes scene filenames and data into JSON format
         """
         self.train_val_split = train_val_split
@@ -50,6 +52,9 @@ class SceneDataset:
         ))
         self.idx2label = {i:l for i, l in enumerate(self.labels)}
         self.label2idx = {l:i for i, l in enumerate(self.labels)}
+
+        # for creating unique integer IDs for each sequence
+        self.seq_enc = self.sequence_encoding()
 
         # create the dataset and store on disk
         self._split_and_write()
@@ -104,6 +109,20 @@ class SceneDataset:
             "annotations": object_masks,
             "num_frames": num_frames,
             "visible_classes": visible_classes
+        }
+
+    def sequence_encoding(self):
+        """Create unique encoding for each sequence based off of the pivot frame and the scene name:
+
+                    frame 1 ... frame N
+            scene 1  (0, 0)      (0, N)
+            ...
+            scene M  (M, 0)      (M, N)
+        """
+        N = max(scene['num_frames'] for scene in self.scene_data)
+        return {
+            scene_name: list(range(i * N, i * N + scene['num_frames'])) 
+            for i, (scene_name, scene) in enumerate(zip(self.scene_dirs, self.scene_data))
         }
 
     def rolling_window(self, arr, stride=1):
@@ -203,19 +222,12 @@ class SceneDataset:
 
         logger.info(f"Wrote data to {filenames}")
 
-
-class SceneRegister(SceneDataset):
-
-    def __init__(self, dataroot, train_val_split=0.8, window_size=5, frame_strides=[1]):
-        super().__init__(dataroot, train_val_split=train_val_split, window_size=window_size, frame_strides=frame_strides)
-        self.dataroot = dataroot
-
     def _read_json_data(self, dataset_name):
         with open(f"{self.dataroot}/{dataset_name}.json", 'r') as f:
             datadicts = json.load(f)
         return datadicts
 
-    def __call__(self, dataset_name):
+    def load(self, dataset_name):
         """Load preprocessed JSON dataset and create dataset for SAILVOS scene(s)
 
         Args:
@@ -226,21 +238,25 @@ class SceneRegister(SceneDataset):
         """
         datadicts = self._read_json_data(dataset_name)
 
-        print(self.label2idx)
-
         # create the Detectron2 dataset
         logger.info(f"Creating dataset {dataset_name}")
         dataset_dicts = []
         for data in datadicts:
             record = {
-                f"{field}_filenames": map(lambda f: os.path.join(self.dataroot, f), data[f"{field}_filenames"])
+                f"{field}_filenames": list(map(
+                    lambda f: os.path.join(data["scene_name"], f), 
+                    data[f"{field}_filenames"]
+                ))
                 for field in ["image", "depth", "camera", "range", "visible"]
             }
 
             # additional metadata
+            pivot = len(record['image_filenames']) // 2
             record.update({
                 "height": data["height"],
                 "width": data["width"],
+                "image_id": self.seq_enc[data["scene_name"]][data["start"] + pivot * data["stride"]],  # pivot frame encoding
+                "file_name": record["image_filenames"][pivot],
                 "start": data["start"],
                 "end": data["end"],
                 "stride": data["stride"],
@@ -249,7 +265,7 @@ class SceneRegister(SceneDataset):
 
             annos = [
                 {
-                    "mask_filename": os.path.join(self.dataroot, anno["mask_filename"]),
+                    "mask_filename": os.path.join(data["scene_name"], anno["mask_filename"]),
                     "bbox": anno["bbox"],
                     "category_id": anno["category_id"],
                     "bbox_mode": BoxMode.XYWH_ABS
@@ -260,40 +276,40 @@ class SceneRegister(SceneDataset):
 
         return dataset_dicts
         
-
-def register_sailvos(dataroot, dataset_name):
-    registry = SceneRegister(
-        dataroot, 
-        window_size=5, 
-        frame_strides=[1,2,4,8], 
-        train_val_split=0.8
-    )
-    DatasetCatalog.register(
-        dataset_name, lambda: registry(dataset_name)
-    )
-    metadata = {"thing_colors": list(registry.idx2label), "thing_classes": list(registry.label2idx)}
-    MetadataCatalog.get(dataset_name).set(
-        json_file=f"{registry.dataroot}/{dataset_name}.json", image_root=dataroot, **metadata
-    )
+    def register(self, dataset_name):
+        DatasetCatalog.register(
+            dataset_name, lambda: self.load(dataset_name)
+        )
+        metadata = {"thing_classes": list(self.label2idx)}
+        MetadataCatalog.get(dataset_name).set(**metadata)
 
 
 if __name__.endswith("registry"):
-    for ds_name in ["sailvos_train"]:
+    cfg = get_cfg()
+    cfg = amodal3d_cfg_defaults(cfg)
+    sailvos_ds = SAILVOSDataset(
+        "data", 
+        window_size=cfg.SAILVOS.WINDOW_SIZE, 
+        frame_strides=cfg.SAILVOS.FRAME_STRIDES
+    )
+    for ds_name in ["sailvos_train", "sailvos_val"]:
         if ds_name in DatasetCatalog.list():
             DatasetCatalog.remove(ds_name)
-        register_sailvos("data", ds_name)
+        sailvos_ds.register(ds_name)
+elif __name__ == '__main__':
+    """Compute the image mean and std and print to stdout (may take a while)
 
-
-if __name__ == '__main__':
-    """For testing the SAILVOS dataloader
+    NOTE: set the cfg.MODEL.PIXEL_{MEAN, STD} to the output
     """
-    from pprint import pprint
-
-    meta = MetadataCatalog.get("SAILVOS")
-    s = SceneDataset("data", window_size=3, frame_strides=[100])
-
-    # pprint(s.scene_data[0]["annotations"])
-    pprint(s.idx2label)
-    pprint(s.label2idx)
-
-    sr = SceneRegister()
+    cfg = get_cfg()
+    cfg = amodal3d_cfg_defaults(cfg)
+    sailvos_ds = SAILVOSDataset(
+        "data", 
+        window_size=cfg.SAILVOS.WINDOW_SIZE, 
+        frame_strides=cfg.SAILVOS.FRAME_STRIDES
+    ).load("sailvos_train")
+    images = np.array([
+        [utils.read_image(img) for img in record["image_filenames"]]
+        for record in sailvos_ds
+    ])
+    print(images.shape)

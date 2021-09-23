@@ -7,8 +7,6 @@ import numpy as np
 import detectron2.data.detection_utils as utils
 import detectron2.data.transforms as T
 
-from detectron2.data import MetadataCatalog, DatasetCatalog
-
 
 class Amodal3DMapper:
     """
@@ -31,9 +29,9 @@ class Amodal3DMapper:
 
         images = np.array([utils.read_image(img) for img in dataset_dict["image_filenames"]])
         depth_maps = np.array([np.load(depth) for depth in dataset_dict["depth_filenames"]])
-        visibles = np.array([np.load(vis) for vis in dataset_dict["visible_filename"]])
-        range_matrices = np.array([self._range_proj_matrix(rng) for rng in dataset_dict["range_filename"]])
-        Ks, Rts = [np.array(l) for l in zip(*[self._camera_matrices(cams) for cams in dataset_dict["camera_filename"]])]
+        visibles = np.array([np.load(vis) for vis in dataset_dict["visible_filenames"]])
+        range_matrices = np.array([self._range_proj_matrix(rng) for rng in dataset_dict["range_filenames"]])
+        Ks, Rts = [np.array(l) for l in zip(*[self._camera_matrices(cams) for cams in dataset_dict["camera_filenames"]])]
 
         dataset_dict["images"] = torch.as_tensor(images.transpose(0, 3, 1, 2)).float()
         dataset_dict["depth_maps"] = torch.as_tensor(depth_maps).float()

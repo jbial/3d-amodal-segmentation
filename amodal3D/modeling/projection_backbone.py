@@ -1,4 +1,6 @@
 """Script for building the projection backbone
+
+TODO: add point processor model
 """
 import torch
 import torch.nn as nn
@@ -13,20 +15,26 @@ from detectron2.modeling import BACKBONE_REGISTRY, Backbone, ShapeSpec
 class ProjectionBackbone(Backbone):
     def __init__(self, cfg, input_shape):
         super().__init__(),
+        self.cfg = cfg
+        self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-        # take subset of resnet18 layers
+        # take subset of resnet18 layers for feature extractor
         self.encoder = self._build_encoder()
 
         self.H, self.W = 800, 1280
-        self.H_feats, self.W_feats = self.get_output_spatial_res()
+        self.F, self.H_feats, self.W_feats = self.get_output_spatial_res()
 
-        self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        # point processing model
+        self.point_model = self._build_point_processor()
+
+        # model for aggregating features from different views
+        self.aggregator = self._build_aggregator()
 
         # initialize homogeneous coordinates and NDC coordinates
         self.X, self.Y, self.ndc_X, self.ndc_Y = self._get_coords(self.H_feats, self.W_feats)
 
     def get_output_spatial_res(self):
-        return self.encoder(torch.rand(1, 3, self.H, self.W)).shape[-2:]
+        return self.encoder(torch.rand(1, 3, self.H, self.W)).shape[-3:]
 
     def _get_coords(self, H, W):
         u, v = np.arange(0, W), np.arange(0, H)
@@ -43,6 +51,24 @@ class ProjectionBackbone(Backbone):
         pretrained = models.resnet18(pretrained=False)
         return nn.Sequential(*list(pretrained.children())[:-4])
 
+    def _build_point_processor(self):
+        """Builds point cloud feature model
+        """
+        # for now use the identity function
+        return lambda points, features: points
+
+    def _build_aggregator(self):
+        """Aggregates features after the backprojection step
+        """
+        return nn.Sequential(
+            nn.ConstantPad2d(1, 0),
+            nn.Conv2d((self.F + 3) * self.cfg.SAILVOS.WINDOW_SIZE, self.F, kernel_size=3),
+            nn.BatchNorm2d(self.F),
+            nn.ReLU(inplace=True),
+            nn.ConstantPad2d(1, 0),
+            nn.Conv2d(self.F, self.F, kernel_size=1)
+        )
+
     def forward(self, images, depth, K, Rt, gproj):
         K = K.float()
         Rt = Rt.float()
@@ -51,14 +77,17 @@ class ProjectionBackbone(Backbone):
         B, T, C, H, W = images.shape
         features = self.encoder(
             images.view(B * T, C, H, W)
-        ).view(B, T, C, self.H_feats, self.W_feats)
+        ).view(B, T, -1, self.H_feats, self.W_feats)
 
         # project to 3D, then project back to 2D in a single camera view
         pcd = self._to_pcd(features.shape, depth, Rt, gproj)
-        projection = self._to_grid(pcd, features, K, Rt)
 
-        # TODO: fix dis
-        return {"conv1": self.conv1(image)}
+        projection = self._to_grid(pcd, features, K, Rt).view(B, -1, self.H_feats, self.W_feats)
+
+        # reduce features along sequence length dimension
+        agg = self.aggregator(projection)
+
+        return {"aggregated": agg}
 
     def _to_pcd(self, shape, depth, Rt, gproj):
         B, T, C, H, W = shape
@@ -92,7 +121,14 @@ class ProjectionBackbone(Backbone):
     def _to_grid(self, points, features, K, Rt):
         """Project back into 2D (rasterize), only in the radius camera
         """
-        B, T, _, _ = points.shape
+        # concat image features with point features
+        B, T, _, H, W = features.shape
+        point_feats = torch.cat([
+            features.view(B, T, -1, H * W),
+            points[..., :-1, :]
+        ], dim=2)
+        _, _, F, _ = point_feats.shape
+
         radius = T // 2
 
         # convert world to camera coordinates
@@ -103,9 +139,9 @@ class ProjectionBackbone(Backbone):
         backproj_camcoords.div_(-backproj_camcoords[..., -1, :].unsqueeze(2))
 
         # convert to image coordinates with intrinsic matrices
-        intrinsics[..., :2, 2] = torch.tensor([-self.W_feats / 2, -self.H_feats / 2])
-        intrinsics[..., 0, 0] *= self.W_feats / self.W
-        intrinsics[..., 1, 1] *= self.H_feats / self.H
+        intrinsics[..., :2, 2] = torch.tensor([-W / 2, -H / 2])
+        intrinsics[..., 0, 0] *= W / self.W
+        intrinsics[..., 1, 1] *= H / self.H
 
         backproj_imgcoords = (intrinsics @ backproj_camcoords)[..., :-1, :]
 
@@ -128,19 +164,20 @@ class ProjectionBackbone(Backbone):
             ],
             dim=-1
         )
-        points_flat = (points_y * self.W_feats + points_x).clamp(min=0, max=(self.H_feats * self.W_feats - 1))
-        points_idx = points_flat.unsqueeze(2).repeat(1, 1, 3, 1).long
+        points_flat = (points_y * W + points_x).clamp(min=0, max=(H * W - 1)).long()
+        points_idx = points_flat.unsqueeze(2).repeat(1, 1, F, 1)
 
         # rasterize with a scatter mean procedure
-        mask = (points_idx > 0) & (points_idx < self.H_feats * self.W_feats)
-        zeros = torch.zeros(B, T, 3, self.H_feats * self.W_feats).float()
-        values = features.flatten(start_dim=3).repeat(1,1,1,4)
-        raster_sums = torch.scatter_add(zeros, -1, points_idx, values)
-        raster_cnts = torch.scatter_add(zeros[..., 0, :], -1, points_flat, torch.ones_like(points_flat).float())
+        pnt_mask = (points_flat > 0) & (points_flat < H * W)
+        idx_mask = (points_idx > 0) & (points_idx < H * W)
+        zeros = torch.zeros(B, T, F, H * W).float()
+        values = point_feats.repeat(1,1,1,4)
+        raster_sums = torch.scatter_add(zeros, -1, points_idx * idx_mask, values)
+        raster_cnts = torch.scatter_add(zeros[..., 0, :], -1, points_flat * pnt_mask, torch.ones_like(points_flat).float())
         rasters = raster_sums / raster_cnts.unsqueeze(2).clamp(min=1)
         return rasters
 
     def output_shape(self):
-        return {"conv1": ShapeSpec(channels=64, stride=16)}
+        return {"aggregated": ShapeSpec(channels=self.F, stride=1)}
 
 

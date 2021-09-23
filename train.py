@@ -13,10 +13,10 @@ from detectron2.data import (
 from detectron2.engine import DefaultTrainer, default_argument_parser, default_setup, launch
 from detectron2.evaluation import inference_on_dataset
 from detectron2.utils.logger import setup_logger
-
+from detectron2.evaluation import COCOEvaluator
 from amodal3D.modeling import ProjectionRCNN
 from amodal3D.config import amodal3d_cfg_defaults  
-from amodal3D.data import Amodal3DMapper
+from amodal3D.data import Amodal3DMapper, registry
 import amodal3D.modeling
 
 
@@ -24,7 +24,7 @@ class Trainer(DefaultTrainer):
     @classmethod
     def build_evaluator(cls, cfg, dataset_name):
         # TODO: Implement custom evaluator OR use COCOEvaluator
-        return SAILVOSEvaluator(dataset_name, cfg, True)
+        return COCOEvaluator(dataset_name, cfg, True)
     
     @classmethod
     def build_test_loader(cls, cfg, dataset_name):
@@ -73,11 +73,8 @@ def main(args):
 
     trainer = Trainer(cfg)
     
-    # testing
     model = trainer.build_model(cfg)
-
     trainloader = trainer.build_train_loader(cfg)
-    
     loader = trainer.build_train_loader(cfg)
     trainer.resume_or_load(resume=args.resume)
     return trainer.train()
@@ -94,4 +91,3 @@ if __name__ == "__main__":
         dist_url=args.dist_url,
         args=(args,),
     )
-
