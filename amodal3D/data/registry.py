@@ -10,7 +10,6 @@ import numpy as np
 
 from detectron2.data import MetadataCatalog, DatasetCatalog
 from detectron2.structures import BoxMode
-import detectron2.data.detection_utils as utils
 from tqdm import tqdm
 from detectron2.config import get_cfg
 from ..config import amodal3d_cfg_defaults  
@@ -288,7 +287,7 @@ if __name__.endswith("registry"):
     cfg = get_cfg()
     cfg = amodal3d_cfg_defaults(cfg)
     sailvos_ds = SAILVOSDataset(
-        "data", 
+        "datasets", 
         window_size=cfg.SAILVOS.WINDOW_SIZE, 
         frame_strides=cfg.SAILVOS.FRAME_STRIDES
     )
@@ -296,20 +295,3 @@ if __name__.endswith("registry"):
         if ds_name in DatasetCatalog.list():
             DatasetCatalog.remove(ds_name)
         sailvos_ds.register(ds_name)
-elif __name__ == '__main__':
-    """Compute the image mean and std and print to stdout (may take a while)
-
-    NOTE: set the cfg.MODEL.PIXEL_{MEAN, STD} to the output
-    """
-    cfg = get_cfg()
-    cfg = amodal3d_cfg_defaults(cfg)
-    sailvos_ds = SAILVOSDataset(
-        "data", 
-        window_size=cfg.SAILVOS.WINDOW_SIZE, 
-        frame_strides=cfg.SAILVOS.FRAME_STRIDES
-    ).load("sailvos_train")
-    images = np.array([
-        [utils.read_image(img) for img in record["image_filenames"]]
-        for record in sailvos_ds
-    ])
-    print(images.shape)
