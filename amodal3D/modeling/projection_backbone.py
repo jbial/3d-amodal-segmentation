@@ -31,7 +31,8 @@ class ProjectionBackbone(Backbone):
         self.aggregator = self._build_aggregator()
 
         # initialize homogeneous coordinates and NDC coordinates
-        self.X, self.Y, self.ndc_X, self.ndc_Y = self._get_coords(self.H_feats, self.W_feats)
+        coords = self._get_coords(self.H_feats, self.W_feats)
+        self.ndc_X, self.ndc_Y = [c.to(self.device) for c in coords[2:]]
 
     def get_output_spatial_res(self):
         return self.encoder(torch.rand(1, 3, self.H, self.W)).shape[-3:]
@@ -100,7 +101,7 @@ class ProjectionBackbone(Backbone):
                 self.ndc_X.flatten().repeat(B, T, 1),
                 self.ndc_Y.flatten().repeat(B, T, 1),
                 downsampled_depth.flatten(start_dim=2), 
-                torch.ones(B, T, H * W)
+                torch.ones(B, T, H * W).to(self.device)
             ],
             axis=2
         )  # shape: (B, T, 4, H*W)
@@ -174,8 +175,16 @@ class ProjectionBackbone(Backbone):
         values = point_feats.repeat(1, 1, 1, 4) * index_mask
 
         # rasterize with a scatter mean procedure
-        raster_sums = torch.zeros(B, T, F, H * W).scatter_add_(-1, indices_clamped.unsqueeze(2).repeat(1, 1, F, 1), values)
-        raster_cnts = torch.zeros(B, T, H * W).scatter_add_(-1, indices_clamped, torch.ones_like(indices_clamped).float())
+        raster_sums = torch.zeros(B, T, F, H * W).to(self.device).scatter_add_(
+            -1, 
+            indices_clamped.unsqueeze(2).repeat(1, 1, F, 1), 
+            values
+        )
+        raster_cnts = torch.zeros(B, T, H * W).to(self.device).scatter_add_(
+            -1, 
+            indices_clamped, 
+            torch.ones_like(indices_clamped).float().to(self.device)
+        )
         rasters = raster_sums / raster_cnts.unsqueeze(2).clamp(min=1)
 
         return rasters
