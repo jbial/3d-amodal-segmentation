@@ -19,10 +19,10 @@ MODEL:
     NAME: "StandardROIHeads"
     IN_FEATURES: ["aggregated"]
     BATCH_SIZE_PER_IMAGE: 128
-    SCORE_THRESH_TEST: 0.05
+    SCORE_THRESH_TEST: 0.01
     # Overlap threshold used for non-maximum suppression (suppress boxes with
     # IoU >= this threshold)
-    NMS_THRESH_TEST: 0.05
+    NMS_THRESH_TEST: 0.01
     NUM_CLASSES: 17
   ROI_BOX_HEAD:
     NAME: "FastRCNNConvFCHead"
@@ -51,7 +51,7 @@ INPUT:
   MIN_SIZE_TEST: 800
   MAX_SIZE_TEST: 1200
   MASK_FORMAT: 'bitmask'
-  RANDOM_FLIP: "none"
-  FORMAT: RGB
+  RANDOM_FLIP: 'none'
+  FORMAT: 'RGB'
 VIS_PERIOD: 1
 VERSION: 2

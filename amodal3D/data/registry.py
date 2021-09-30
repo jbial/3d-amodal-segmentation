@@ -46,10 +46,10 @@ class SAILVOSDataset:
         # extract labels (bit convoluted)
         label_re = re.compile("([A-Za-z])([A-Za-z\_]+)([A-Za-z])")
         self.label_map = lambda s: label_re.search(s).group(0)
-        self.labels = set(map(
+        self.labels = sorted(set(map(
             self.label_map, 
             [label.split('/')[-1] for scene in self.scene_dirs for label in glob.glob(f"{scene}/[0-9]*")]
-        ))
+        )))
         self.idx2label = {i:l for i, l in enumerate(self.labels)}
         self.label2idx = {l:i for i, l in enumerate(self.labels)}
         self.logger.info(f"[SAILVOSDataset] Extracted thing classes: {list(self.label2idx.keys())}")
