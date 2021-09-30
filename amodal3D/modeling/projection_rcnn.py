@@ -1,22 +1,19 @@
-# Copyright (c) Facebook, Inc. and its affiliates.
-from amodal3D.modeling.projection_backbone import ProjectionBackbone
-import logging
-import numpy as np
-from typing import Dict, List, Optional, Tuple
 import torch
-from torch import nn
+import torch.nn as nn
+import numpy as np
 
+from typing import Dict, List, Optional, Tuple
 from detectron2.config import configurable
 from detectron2.data.detection_utils import convert_image_to_rgb
 from detectron2.structures import ImageList, Instances
 from detectron2.utils.events import get_event_storage
 from detectron2.utils.logger import log_first_n
-
 from detectron2.modeling.backbone import Backbone, build_backbone
 from detectron2.modeling.postprocessing import detector_postprocess
 from detectron2.modeling.proposal_generator import build_proposal_generator
 from detectron2.modeling.roi_heads import build_roi_heads
 from detectron2.modeling import META_ARCH_REGISTRY
+from amodal3D.modeling.projection_backbone import ProjectionBackbone
 
 __all__ = ["ProjectionRCNN"]
 
@@ -107,8 +104,9 @@ class ProjectionRCNN(nn.Module):
         max_vis_prop = 20
 
         for input, prop in zip(batched_inputs, proposals):
-            img = input["image"]
-            img = convert_image_to_rgb(img.permute(1, 2, 0), self.input_format)
+            img = input["images"]
+            T, _, _, _ = img.shape
+            img = convert_image_to_rgb(img[T // 2, ...].permute(1, 2, 0), self.input_format)
             v_gt = Visualizer(img, None)
             v_gt = v_gt.overlay_instances(boxes=input["instances"].gt_boxes)
             anno_img = v_gt.get_image()
@@ -210,9 +208,18 @@ class ProjectionRCNN(nn.Module):
             Otherwise, a list[Instances] containing raw network outputs.
         """
         assert not self.training
-
         images = self.preprocess_image(batched_inputs)
-        features = self.backbone(images.tensor)
+
+        projs = [list(l) for l in zip(*[
+            (x["depth_maps"].to(self.device),
+             x["K"].to(self.device),
+             x["Rt"].to(self.device),
+             x["gproj"].to(self.device))
+            for x in batched_inputs
+        ])]
+
+        depth_maps, K, Rt, gproj = [ImageList.from_tensors(x) for x in projs]
+        features = self.backbone(images.tensor, depth_maps.tensor, K.tensor, Rt.tensor, gproj.tensor)
 
         if detected_instances is None:
             if self.proposal_generator is not None:
@@ -228,7 +235,7 @@ class ProjectionRCNN(nn.Module):
 
         if do_postprocess:
             assert not torch.jit.is_scripting(), "Scripting is not supported for postprocess."
-            return ProjectionBackbone._postprocess(results, batched_inputs, images.image_sizes)
+            return ProjectionRCNN._postprocess(results, batched_inputs, images.image_sizes)
         else:
             return results
 
@@ -256,4 +263,3 @@ class ProjectionRCNN(nn.Module):
             r = detector_postprocess(results_per_image, height, width)
             processed_results.append({"instances": r})
         return processed_results
-

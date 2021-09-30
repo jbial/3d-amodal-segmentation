@@ -2,40 +2,30 @@
 """
 import detectron2.utils.comm as comm
 
-from collections import OrderedDict
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import get_cfg
-from detectron2.data import (
-    MetadataCatalog,
-    build_detection_test_loader,
-    build_detection_train_loader,
-)
+from detectron2.data import build_detection_test_loader, build_detection_train_loader
 from detectron2.engine import DefaultTrainer, default_argument_parser, default_setup, launch
-from detectron2.evaluation import inference_on_dataset
 from detectron2.utils.logger import setup_logger
-from detectron2.evaluation import COCOEvaluator
-from amodal3D.modeling import ProjectionRCNN
+from detectron2.evaluation import COCOEvaluator, verify_results
 from amodal3D.config import amodal3d_cfg_defaults  
-from amodal3D.data import Amodal3DMapper, registry
+from amodal3D.data import Amodal3DMapper
 import amodal3D.modeling
 
 
 class Trainer(DefaultTrainer):
     @classmethod
     def build_evaluator(cls, cfg, dataset_name):
-        # TODO: Implement custom evaluator OR use COCOEvaluator
-        return COCOEvaluator(dataset_name, cfg, True)
+        return COCOEvaluator(dataset_name, output_dir=cfg.OUTPUT_DIR)
     
     @classmethod
     def build_test_loader(cls, cfg, dataset_name):
-        # TODO: Implement custom SAILVOS data mappers
         return build_detection_test_loader(
             cfg, dataset_name, mapper=Amodal3DMapper(cfg, is_train=False)
         )
 
     @classmethod
     def build_train_loader(cls, cfg):
-        # TODO: Implement custom SAILVOS data mappers
         return build_detection_train_loader(
             cfg, mapper=Amodal3DMapper(cfg, is_train=True)
         )
@@ -45,18 +35,12 @@ def setup(args):
     """Customize and setup configs
     """
     cfg = get_cfg()
-
-    # TODO: implement,
     cfg = amodal3d_cfg_defaults(cfg)
-
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
     cfg.freeze()
     default_setup(cfg, args)
-
-    # Setup logger for "amodal-3d" module
     setup_logger(output=cfg.OUTPUT_DIR, distributed_rank=comm.get_rank(), name="amodal-3d")
-
     return cfg
 
 
@@ -69,13 +53,11 @@ def main(args):
             cfg.MODEL.WEIGHTS, resume=args.resume
         )
         res = Trainer.test(cfg, model)
+        if comm.is_main_process():
+            verify_results(cfg, res)
         return res
 
     trainer = Trainer(cfg)
-    
-    model = trainer.build_model(cfg)
-    trainloader = trainer.build_train_loader(cfg)
-    loader = trainer.build_train_loader(cfg)
     trainer.resume_or_load(resume=args.resume)
     return trainer.train()
 

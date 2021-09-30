@@ -65,7 +65,6 @@ class ProjectionBackbone(Backbone):
             nn.Conv2d((self.F + 3) * self.cfg.SAILVOS.WINDOW_SIZE, self.F, kernel_size=3),
             nn.BatchNorm2d(self.F),
             nn.ReLU(inplace=True),
-            nn.ConstantPad2d(1, 0),
             nn.Conv2d(self.F, self.F, kernel_size=1)
         )
 
@@ -77,27 +76,25 @@ class ProjectionBackbone(Backbone):
         B, T, C, H, W = images.shape
         features = self.encoder(
             images.view(B * T, C, H, W)
-        ).view(B, T, -1, self.H_feats, self.W_feats)
+        ).view(B, T, -1, self.H_feats * self.W_feats)
 
         # project to 3D, then project back to 2D in a single camera view
-        pcd = self._to_pcd(features.shape, depth, Rt, gproj)
-
-        projection = self._to_grid(pcd, features, K, Rt).view(B, -1, self.H_feats, self.W_feats)
+        pcds = self._to_pcd(depth, Rt, gproj)
+        projections = self._to_grid(pcds, features, K, Rt).view(B, -1, self.H_feats, self.W_feats)
+        proj_images = torch.flip(projections, dims=(-1, -2))
 
         # reduce features along sequence length dimension
-        agg = self.aggregator(projection)
+        agg = self.aggregator(proj_images)
 
         return {"aggregated": agg}
 
-    def _to_pcd(self, shape, depth, Rt, gproj):
-        B, T, C, H, W = shape
+    def _to_pcd(self, depth, Rt, gproj):
+        """Computes point cloud coordinates based on depth maps and RAGE matrices
+        """
+        B, T, _, _ = depth.shape
+        H, W = self.H_feats, self.W_feats
 
-        downsampled_depth = F.interpolate(
-            depth.unsqueeze(2), 
-            size=(1, H, W),
-            mode='nearest'
-        ).squeeze()
-
+        downsampled_depth = F.interpolate(depth, size=(H, W), mode='nearest')
         nd_coords = torch.stack(
             [
                 self.ndc_X.flatten().repeat(B, T, 1),
@@ -116,13 +113,17 @@ class ProjectionBackbone(Backbone):
         world_coords = torch.inverse(Rt) @ cam_coords
         world_coords = world_coords / world_coords[:, :, -1, :].unsqueeze(2)
 
-        return world_coords
+        # send all world coordinates into pivot frame's local coordinate system
+        local_coords = Rt[:, T // 2, ...].unsqueeze(1).repeat(1, T, 1, 1) @ world_coords
+
+        return local_coords
 
     def _to_grid(self, points, features, K, Rt):
         """Project back into 2D (rasterize), only in the radius camera
         """
-        # concat image features with point features
-        B, T, _, H, W = features.shape
+        # concat image features with XYZ point features
+        B, T, _, _ = features.shape
+        H, W = self.H_feats, self.W_feats
         point_feats = torch.cat([
             features.view(B, T, -1, H * W),
             points[..., :-1, :]
@@ -145,7 +146,8 @@ class ProjectionBackbone(Backbone):
 
         backproj_imgcoords = (intrinsics @ backproj_camcoords)[..., :-1, :]
 
-        # quantize the back projected image coordinates
+        # produce 4 sets of quantized image coordinates corresponding to the four corners of a grid cell
+        # this seems provides a cleaner raster with less empty pixels
         points_x = torch.cat(
             [
                 torch.floor(backproj_imgcoords[..., 0, :]), 
@@ -164,17 +166,18 @@ class ProjectionBackbone(Backbone):
             ],
             dim=-1
         )
-        points_flat = (points_y * W + points_x).clamp(min=0, max=(H * W - 1)).long()
-        points_idx = points_flat.unsqueeze(2).repeat(1, 1, F, 1)
+
+        # zero out all feature vectors that correspond to out-of-boundary coordinates
+        indices = (points_y * W + points_x).long()
+        indices_clamped = indices.clamp(min=0, max=H * W - 1)
+        index_mask = ((indices >= 0) & (indices < H * W)).unsqueeze(2)
+        values = point_feats.repeat(1, 1, 1, 4) * index_mask
 
         # rasterize with a scatter mean procedure
-        pnt_mask = (points_flat > 0) & (points_flat < H * W)
-        idx_mask = (points_idx > 0) & (points_idx < H * W)
-        zeros = torch.zeros(B, T, F, H * W).float()
-        values = point_feats.repeat(1,1,1,4)
-        raster_sums = torch.scatter_add(zeros, -1, points_idx * idx_mask, values)
-        raster_cnts = torch.scatter_add(zeros[..., 0, :], -1, points_flat * pnt_mask, torch.ones_like(points_flat).float())
+        raster_sums = torch.zeros(B, T, F, H * W).scatter_add_(-1, indices_clamped.unsqueeze(2).repeat(1, 1, F, 1), values)
+        raster_cnts = torch.zeros(B, T, H * W).scatter_add_(-1, indices_clamped, torch.ones_like(indices_clamped).float())
         rasters = raster_sums / raster_cnts.unsqueeze(2).clamp(min=1)
+
         return rasters
 
     def output_shape(self):

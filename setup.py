@@ -18,7 +18,7 @@ if __name__ == '__main__':
     cfg = get_cfg()
     cfg = amodal3d_cfg_defaults(cfg)
     sailvos_ds = SAILVOSDataset(
-        "data", 
+        "datasets", 
         window_size=cfg.SAILVOS.WINDOW_SIZE, 
         frame_strides=cfg.SAILVOS.FRAME_STRIDES
     ).load("sailvos_train")
@@ -27,6 +27,6 @@ if __name__ == '__main__':
     for record in tqdm(sailvos_ds, desc="Parsing dataset"):
         images = np.array([utils.read_image(img) for img in record["image_filenames"]])
         mean.append(images.mean(axis=(0, 1, 2)))
-        mean.append(images.std(axis=(0, 1, 2)))
+        std.append(images.std(axis=(0, 1, 2)))
 
-    print(f"Image moments:\n\tmean: {np.mean(mean)}\n\tstandard deviation: {np.std(std)}")
+    print(f"Image moments:\n\tmean: {np.mean(mean, axis=0)}\n\tstandard deviation: {np.std(std, axis=0)}")

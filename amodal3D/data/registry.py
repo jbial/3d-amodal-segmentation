@@ -12,9 +12,8 @@ from detectron2.data import MetadataCatalog, DatasetCatalog
 from detectron2.structures import BoxMode
 from tqdm import tqdm
 from detectron2.config import get_cfg
-from ..config import amodal3d_cfg_defaults  
-
-logger = logging.getLogger(__name__)
+from amodal3D.utils.utils import blob_bbox, encode_seg_mask
+from amodal3D.config.config import amodal3d_cfg_defaults 
 
 
 class SAILVOSDataset:
@@ -22,6 +21,7 @@ class SAILVOSDataset:
     def __init__(self, dataroot, train_val_split=0.8, window_size=5, frame_strides=[1]):
         """Processes scene filenames and data into JSON format
         """
+        self.logger = logging.getLogger(__name__)
         self.train_val_split = train_val_split
 
         # extract all paths to scene directories
@@ -31,6 +31,7 @@ class SAILVOSDataset:
             lambda s: f"{dataroot}/{s}", 
             filter(self.scene_re.match, os.listdir(dataroot))
         ))
+        self.logger.info(f"[SAILVOSDataset] Extracted scenes: {self.scene_dirs}")
 
         # hardcoded (property of dataset)
         self.H, self.W = 800, 1280  
@@ -51,6 +52,7 @@ class SAILVOSDataset:
         ))
         self.idx2label = {i:l for i, l in enumerate(self.labels)}
         self.label2idx = {l:i for i, l in enumerate(self.labels)}
+        self.logger.info(f"[SAILVOSDataset] Extracted thing classes: {list(self.label2idx.keys())}")
 
         # for creating unique integer IDs for each sequence
         self.seq_enc = self.sequence_encoding()
@@ -82,7 +84,7 @@ class SAILVOSDataset:
         visible_classes = np.load(f"{scene_path}/visible_objects.npy")
 
         num_frames = min(map(len, [images, visibles, depth_maps, cam_matrices]))
-        logger.info(f"{scene_path} contains {num_frames} frames.")
+        self.logger.info(f"[SAILVOSDataset] {scene_path} contains {num_frames} frames.")
 
         # segmentation mask filename for every object sorted by frame
         object_masks = []
@@ -132,7 +134,7 @@ class SAILVOSDataset:
     def _extract_datadicts(self):
         """Extracts dict objects for the images and annotations to be written to a JSON file
         """
-        logger.info("Preprocessing dataset filenames and metadata into JSON format")
+        self.logger.info("[SAILVOSDataset] Preprocessing dataset filenames and metadata into JSON format")
         path_parser = lambda fn, idx: '/'.join(fn.split('/')[-idx:])
 
         slices = []
@@ -147,13 +149,12 @@ class SAILVOSDataset:
             range_matrices = scene_data["range_matrices"]
             visibles = scene_data["visibles"]
             annotations = scene_data["annotations"]
-            visible_classes = scene_data["visible_classes"]
 
             frames = np.arange(num_frames)
             strided_sequences = [self.rolling_window(frames, stride=fs) for fs in self.frame_strides]
 
             for j, sequences in enumerate(strided_sequences):
-                for seq in tqdm(sequences, desc=f"Extracting [window_size={self.window_size}, stride={self.frame_strides[j]}]", leave=True):
+                for seq in tqdm(sequences, desc=f"Extracting [window_size={self.window_size}, stride={self.frame_strides[j]}]"):
                     if seq[-1] - seq[-2] != self.frame_strides[j]:
                         continue
 
@@ -189,7 +190,7 @@ class SAILVOSDataset:
                         bitmask = cv2.imread(obj_file)
                         anno = {
                             "mask_filename": path_parser(obj_file, 2),
-                            "bbox": cv2.boundingRect(np.argwhere(bitmask != 0)[:, :2]),
+                            "bbox": blob_bbox(bitmask),
                             "category_id": self.label2idx[self.label_map(obj_file.split('/')[-2])]
                         }
                         annos.append(anno)
@@ -206,7 +207,7 @@ class SAILVOSDataset:
         if all(os.path.isfile(fn) for fn in filenames):  # dont extract
             return
 
-        logger.info("Extracting, splitting, and writing to JSON")
+        self.logger.info("[SAILVOSDataset] Extracting, splitting, and writing to JSON")
         datadicts = self._extract_datadicts()
 
         # randomly split into train and test
@@ -219,7 +220,7 @@ class SAILVOSDataset:
             with open(name, 'w') as f:
                 json.dump([datadicts[i] for i in inds], f)
 
-        logger.info(f"Wrote data to {filenames}")
+        self.logger.info(f"[SAILVOSDataset] Wrote {dataset_name} data to {filenames}")
 
     def _read_json_data(self, dataset_name):
         with open(f"{self.dataroot}/{dataset_name}.json", 'r') as f:
@@ -238,7 +239,7 @@ class SAILVOSDataset:
         datadicts = self._read_json_data(dataset_name)
 
         # create the Detectron2 dataset
-        logger.info(f"Creating dataset {dataset_name}")
+        self.logger.info(f"[SAILVOSDataset] Creating dataset {dataset_name}")
         dataset_dicts = []
         for data in datadicts:
             record = {
@@ -254,7 +255,8 @@ class SAILVOSDataset:
             record.update({
                 "height": data["height"],
                 "width": data["width"],
-                "image_id": self.seq_enc[data["scene_name"]][data["start"] + pivot * data["stride"]],  # pivot frame encoding
+                # pivot frame unique encoding
+                "image_id": self.seq_enc[data["scene_name"]][data["start"] + pivot * data["stride"]],  
                 "file_name": record["image_filenames"][pivot],
                 "start": data["start"],
                 "end": data["end"],
@@ -264,10 +266,12 @@ class SAILVOSDataset:
 
             annos = [
                 {
-                    "mask_filename": os.path.join(data["scene_name"], anno["mask_filename"]),
+                    "is_crowd": 0,
                     "bbox": anno["bbox"],
+                    "bbox_mode": BoxMode.XYXY_ABS,
                     "category_id": anno["category_id"],
-                    "bbox_mode": BoxMode.XYWH_ABS
+                    "mask_filename": os.path.join(data["scene_name"], anno["mask_filename"]),
+                    "segmentation": encode_seg_mask(os.path.join(data["scene_name"], anno["mask_filename"]))
                 } for anno in data["annotations"]
             ]
             record["annotations"] = annos
@@ -276,6 +280,7 @@ class SAILVOSDataset:
         return dataset_dicts
         
     def register(self, dataset_name):
+        self.logger.info(f"[SAILVOSDataset] Registering {dataset_name}")
         DatasetCatalog.register(
             dataset_name, lambda: self.load(dataset_name)
         )
@@ -288,6 +293,7 @@ if __name__.endswith("registry"):
     cfg = amodal3d_cfg_defaults(cfg)
     sailvos_ds = SAILVOSDataset(
         "datasets", 
+        train_val_split=cfg.SAILVOS.TRAIN_TEST_SPLIT,
         window_size=cfg.SAILVOS.WINDOW_SIZE, 
         frame_strides=cfg.SAILVOS.FRAME_STRIDES
     )
