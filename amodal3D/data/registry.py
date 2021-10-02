@@ -31,6 +31,7 @@ class SAILVOSDataset:
             lambda s: f"{dataroot}/{s}", 
             filter(self.scene_re.match, os.listdir(dataroot))
         ))
+        self.scene_dirs = [f"{dataroot}/tonya_mcs_1"]
         self.logger.info(f"[SAILVOSDataset] Extracted scenes: {self.scene_dirs}")
 
         # hardcoded (property of dataset)

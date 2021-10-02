@@ -1,6 +1,4 @@
 """Script for building the projection backbone
-
-TODO: add point processor model
 """
 import torch
 import torch.nn as nn
@@ -49,8 +47,9 @@ class ProjectionBackbone(Backbone):
     def _build_encoder(self):
         """Builds encoder to reduce dimensionality of images
         """
-        pretrained = models.resnet18(pretrained=False)
-        return nn.Sequential(*list(pretrained.children())[:-4])
+#        pretrained = models.resnet18(pretrained=False)
+#        return nn.Sequential(*list(pretrained.children())[:-4])
+        return lambda x: F.interpolate(x, size=(self.H_feats, self.W_feats), mode='bilinear')
 
     def _build_point_processor(self):
         """Builds point cloud feature model
@@ -61,13 +60,14 @@ class ProjectionBackbone(Backbone):
     def _build_aggregator(self):
         """Aggregates features after the backprojection step
         """
-        return nn.Sequential(
-            nn.ConstantPad2d(1, 0),
-            nn.Conv2d((self.F + 3) * self.cfg.SAILVOS.WINDOW_SIZE, self.F, kernel_size=3),
-            nn.BatchNorm2d(self.F),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(self.F, self.F, kernel_size=1)
-        )
+#        return nn.Sequential(
+#            nn.ConstantPad2d(1, 0),
+#            nn.Conv2d((self.F + 3) * self.cfg.SAILVOS.WINDOW_SIZE, self.F, kernel_size=3),
+#            nn.BatchNorm2d(self.F),
+#            nn.ReLU(inplace=True),
+#            nn.Conv2d(self.F, self.F, kernel_size=1)
+#        )
+        return lambda x: x.mean(dim=1)
 
     def forward(self, images, depth, K, Rt, gproj):
         K = K.float()
@@ -75,9 +75,10 @@ class ProjectionBackbone(Backbone):
 
         # extract features from images and downsample depth maps
         B, T, C, H, W = images.shape
-        features = self.encoder(
-            images.view(B * T, C, H, W)
-        ).view(B, T, -1, self.H_feats * self.W_feats)
+        #features = self.encoder(
+        #    images.view(B * T, C, H, W)
+        #).view(B, T, -1, self.H_feats * self.W_feats)
+        features = self.encoder(images)
 
         # project to 3D, then project back to 2D in a single camera view
         pcds = self._to_pcd(depth, Rt, gproj)
@@ -115,9 +116,9 @@ class ProjectionBackbone(Backbone):
         world_coords = world_coords / world_coords[:, :, -1, :].unsqueeze(2)
 
         # send all world coordinates into pivot frame's local coordinate system
-        local_coords = Rt[:, T // 2, ...].unsqueeze(1).repeat(1, T, 1, 1) @ world_coords
+        #local_coords = Rt[:, T // 2, ...].unsqueeze(1).repeat(1, T, 1, 1) @ world_coords
 
-        return local_coords
+        return world_coords
 
     def _to_grid(self, points, features, K, Rt):
         """Project back into 2D (rasterize), only in the radius camera

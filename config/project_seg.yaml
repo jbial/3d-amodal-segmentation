@@ -1,24 +1,24 @@
 MODEL:
-  DEVICE: 'cpu'
+  DEVICE: 'cuda'
   META_ARCHITECTURE: "ProjectionRCNN"
   BACKBONE:
     NAME: "ProjectionBackbone"
   ANCHOR_GENERATOR:
-    SIZES: [[32, 64, 128, 256]]  # One size for each in feature map
+    SIZES: [[32, 64, 128, 256, 512]]  # One size for each in feature map
     ASPECT_RATIOS: [[0.5, 1.0, 2.0]]  # Three aspect ratios (same for all in feature maps)
   PROPOSAL_GENERATOR:
     NAME: "RPN"
   RPN:
     IN_FEATURES: ["aggregated"]
-    PRE_NMS_TOPK_TRAIN: 2000  # Per FPN level
-    PRE_NMS_TOPK_TEST: 1000  # Per FPN level
+    PRE_NMS_TOPK_TRAIN: 4000  # Per FPN level
+    PRE_NMS_TOPK_TEST: 2000  # Per FPN level
     POST_NMS_TOPK_TRAIN: 2000
     POST_NMS_TOPK_TEST: 1000
     BBOX_REG_LOSS_TYPE: "smooth_l1"
   ROI_HEADS:
     NAME: "StandardROIHeads"
     IN_FEATURES: ["aggregated"]
-    BATCH_SIZE_PER_IMAGE: 128
+    BATCH_SIZE_PER_IMAGE: 256
     SCORE_THRESH_TEST: 0.01
     # Overlap threshold used for non-maximum suppression (suppress boxes with
     # IoU >= this threshold)
@@ -31,7 +31,7 @@ MODEL:
   ROI_MASK_HEAD:
     NAME: "MaskRCNNConvUpsampleHead"
     POOLER_RESOLUTION: 14
-    NUM_CONV: 1
+    NUM_CONV: 0
     POOLER_TYPE: "ROIAlignV2"
   PIXEL_MEAN: [99.44, 100.53, 96.98]
   PIXEL_STD: [3.02, 3.57, 5.63]
@@ -40,10 +40,10 @@ DATASETS:
   TRAIN: ("sailvos_val",)
   TEST: ("sailvos_val",)
 SOLVER:
-  IMS_PER_BATCH: 8
-  BASE_LR: 0.02
+  IMS_PER_BATCH: 2
+  BASE_LR: 0.01
   # STEPS: (60000, 80000)
-  MAX_ITER: 10  # testing number
+  MAX_ITER: 2000
 DATALOADER:
   NUM_WORKERS: 4
 INPUT:
@@ -53,5 +53,5 @@ INPUT:
   MASK_FORMAT: 'bitmask'
   RANDOM_FLIP: 'none'
   FORMAT: 'RGB'
-VIS_PERIOD: 1
+VIS_PERIOD: 100
 VERSION: 2

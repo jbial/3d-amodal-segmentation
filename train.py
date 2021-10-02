@@ -63,7 +63,7 @@ class Trainer(DefaultTrainer):
         
         plt.imshow(image_grid)
         plt.axis('off')
-        fig.savefig(f"{cfg.OUTPUT_DIR}/images_{dataset_name}.png")
+        fig.savefig(f"figures/images_{dataset_name}.png")
 
     @classmethod
     def visualize_eval_results(cls, cfg, dataset_name, model, grid_shape=(3, 3)):
@@ -94,7 +94,7 @@ class Trainer(DefaultTrainer):
 
         plt.imshow(image_grid)
         plt.axis('off')
-        fig.savefig(f"{cfg.OUTPUT_DIR}/eval_images_{dataset_name}.png")
+        fig.savefig(f"figures/eval_images_{dataset_name}.png")
 
 
 def setup(args):
