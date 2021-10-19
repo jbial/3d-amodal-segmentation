@@ -154,8 +154,8 @@ class ProjectionBackbone(Backbone):
 
         # convert to image coordinates with intrinsic matrices
         intrinsics[..., :2, -1] = torch.tensor([W / 2, H / 2])
-        intrinsics[..., [0, 1], [0, 1]] *= torch.tensor([self.H_feats/self.H, self.W_feats/self.W])
-        intrinsics[..., 1, 1] *= -1
+        intrinsics[..., 0, 0] *= self.H_feats/self.H
+        intrinsics[..., 1, 1] *= -self.W_feats/self.W
 
         backproj_imgcoords = intrinsics @ backproj_camcoords
 
