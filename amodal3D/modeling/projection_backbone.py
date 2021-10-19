@@ -215,9 +215,9 @@ class ProjectionBackbone(Backbone):
             index = np.random.choice(img_feats.shape[0])
             fig, axes = plt.subplots(3, 1, figsize=(30, 30))
             images = [
-                torch.cat([im for im in img_feats[index]], dim=-1).permute(1,2,0) / 255.,
-                torch.cat([im for im in raster_feats[index]], dim=-1).permute(1,2,0) / 255.,
-                fused_feats[index].permute(1,2,0) / 255.
+                torch.cat([im for im in img_feats[index]], dim=-1).permute(1,2,0).detach().cpu().numpy() / 255.,
+                torch.cat([im for im in raster_feats[index]], dim=-1).permute(1,2,0).detach().cpu().numpy() / 255.,
+                fused_feats[index].permute(1,2,0).detach().cpu().numpy() / 255.
             ]
             for ax, im in zip(axes, images):
                 ax.axis('off')
