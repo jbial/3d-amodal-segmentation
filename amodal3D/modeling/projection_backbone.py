@@ -1,10 +1,12 @@
 """Script for building the projection backbone
 """
+from numpy.core.defchararray import index
 import torch
 import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
 import torchvision.models as models
+import matplotlib.pyplot as plt
 
 from detectron2.modeling import BACKBONE_REGISTRY, Backbone, ShapeSpec
 
@@ -15,9 +17,14 @@ class ProjectionBackbone(Backbone):
         super().__init__(),
         self.cfg = cfg
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        self.window_size = cfg.SAILVOS.WINDOW_SIZE
 
         # take subset of resnet18 layers for feature extractor
+        self.in_channels = 3 * (1 if cfg.DEBUG_BACKBONE else cfg.SAILVOS.WINDOW_SIZE) 
         self.encoder = self._build_encoder()
+
+        # for visualization/debugging
+        self.visualized = False
 
         self.H, self.W = 800, 1280
         self.F, self.H_feats, self.W_feats = self.get_output_spatial_res()
@@ -47,27 +54,38 @@ class ProjectionBackbone(Backbone):
     def _build_encoder(self):
         """Builds encoder to reduce dimensionality of images
         """
-#        pretrained = models.resnet18(pretrained=False)
-#        return nn.Sequential(*list(pretrained.children())[:-4])
-        return lambda x: F.interpolate(x, size=(self.H_feats, self.W_feats), mode='bilinear')
+        if self.cfg.DEBUG_BACKBONE:
+            # hardcoded target size
+            return lambda x: F.interpolate(x, size=(self.H // 8, self.W // 8), mode='bilinear')
+
+        pretrained = models.resnet18(pretrained=False)
+        return nn.Sequential(*list(pretrained.children())[:-4])
 
     def _build_point_processor(self):
         """Builds point cloud feature model
         """
-        # for now use the identity function
-        return lambda points, features: points
+        if self.cfg.DEBUG_BACKBONE:
+            return lambda points, features: features
+        # TODO: create point processing model
+        return lambda points, features: features
 
     def _build_aggregator(self):
         """Aggregates features after the backprojection step
         """
-#        return nn.Sequential(
-#            nn.ConstantPad2d(1, 0),
-#            nn.Conv2d((self.F + 3) * self.cfg.SAILVOS.WINDOW_SIZE, self.F, kernel_size=3),
-#            nn.BatchNorm2d(self.F),
-#            nn.ReLU(inplace=True),
-#            nn.Conv2d(self.F, self.F, kernel_size=1)
-#        )
-        return lambda x: x.mean(dim=1)
+        if self.cfg.DEBUG_BACKBONE:
+            # simply average over temporal dimension
+            return lambda x: x.reshape(-1, self.window_size, 3, self.H_feats, self.W_feats).mean(axis=1)
+        aggregator = nn.Sequential(
+           nn.Conv2d(self.F * self.cfg.SAILVOS.WINDOW_SIZE, self.F, kernel_size=3, padding=1),
+           nn.BatchNorm2d(self.F),
+           nn.ReLU(inplace=True),
+           nn.Conv2d(self.F, self.F, kernel_size=3, padding=1)
+        )
+
+        # init aggregator weights to zero so projection processing
+        # starts out as the identity function
+        # TODO
+        return aggregator
 
     def forward(self, images, depth, K, Rt, gproj):
         K = K.float()
@@ -75,18 +93,19 @@ class ProjectionBackbone(Backbone):
 
         # extract features from images and downsample depth maps
         B, T, C, H, W = images.shape
-        #features = self.encoder(
-        #    images.view(B * T, C, H, W)
-        #).view(B, T, -1, self.H_feats * self.W_feats)
-        features = self.encoder(images)
+        features = self.encoder(images.view(B * T, C, H, W)).view(B, T, -1, self.H_feats, self.W_feats)
 
         # project to 3D, then project back to 2D in a single camera view
         pcds = self._to_pcd(depth, Rt, gproj)
-        projections = self._to_grid(pcds, features, K, Rt).view(B, -1, self.H_feats, self.W_feats)
-        proj_images = torch.flip(projections, dims=(-1, -2))
+        point_feats = self.point_model(pcds, features.reshape(B, T, -1, self.H_feats * self.W_feats))
 
-        # reduce features along sequence length dimension
-        agg = self.aggregator(proj_images)
+        projections = self._to_grid(pcds, point_feats, K, Rt).view(B, -1, self.H_feats, self.W_feats)
+
+        # fuse features along sequence length dimension
+        agg = self.aggregator(projections + features.reshape(B, -1, self.H_feats, self.W_feats))
+
+        if self.cfg.DEBUG_BACKBONE:
+            self.visualize_feats(features, projections.reshape(B, T, C, self.H_feats, self.W_feats), agg)
 
         return {"aggregated": agg}
 
@@ -115,41 +134,37 @@ class ProjectionBackbone(Backbone):
         world_coords = torch.inverse(Rt) @ cam_coords
         world_coords = world_coords / world_coords[:, :, -1, :].unsqueeze(2)
 
-        # send all world coordinates into pivot frame's local coordinate system
-        #local_coords = Rt[:, T // 2, ...].unsqueeze(1).repeat(1, T, 1, 1) @ world_coords
-
         return world_coords
 
     def _to_grid(self, points, features, K, Rt):
         """Project back into 2D (rasterize), only in the radius camera
         """
         # concat image features with XYZ point features
-        B, T, _, _ = features.shape
+        B, T, F, _ = features.shape
         H, W = self.H_feats, self.W_feats
-        point_feats = torch.cat([
-            features.view(B, T, -1, H * W),
-            points[..., :-1, :]
-        ], dim=2)
-        _, _, F, _ = point_feats.shape
 
         radius = T // 2
 
         # convert world to camera coordinates
-        intrinsics = K[:, radius, :3, :3].repeat(T, 1, 1, 1).transpose(0, 1)
-        extrinsics = Rt[:, radius, :3, :].repeat(T, 1, 1, 1).transpose(0, 1)
+        intrinsics = K[:, radius, ...].unsqueeze(1).repeat(1, T, 1, 1)
+        extrinsics = Rt[:, radius, ...].unsqueeze(1).repeat(1, T, 1, 1)
 
         backproj_camcoords = (extrinsics @ points)
-        backproj_camcoords.div_(-backproj_camcoords[..., -1, :].unsqueeze(2))
+        backproj_camcoords[..., :2, :].div_(-backproj_camcoords[..., 2, :].unsqueeze(2))
 
         # convert to image coordinates with intrinsic matrices
-        intrinsics[..., :2, 2] = torch.tensor([-W / 2, -H / 2])
-        intrinsics[..., 0, 0] *= W / self.W
-        intrinsics[..., 1, 1] *= H / self.H
+        intrinsics[..., :2, -1] = torch.tensor([W / 2, H / 2])
+        intrinsics[..., [0, 1], [0, 1]] *= torch.tensor([self.H_feats/self.H, self.W_feats/self.W])
+        intrinsics[..., 1, 1] *= -1
 
-        backproj_imgcoords = (intrinsics @ backproj_camcoords)[..., :-1, :]
+        backproj_imgcoords = intrinsics @ backproj_camcoords
 
-        # produce 4 sets of quantized image coordinates corresponding to the four corners of a grid cell
-        # this seems provides a cleaner raster with less empty pixels
+        # visibility condition
+        index_mask = (
+            ((backproj_imgcoords[..., 0, :] > 0) & (backproj_imgcoords[..., 0, :] < W)) &\
+            ((backproj_imgcoords[..., 1, :] > 0) & (backproj_imgcoords[..., 1, :] < H))         
+        ).unsqueeze(2)
+
         points_x = torch.cat(
             [
                 torch.floor(backproj_imgcoords[..., 0, :]), 
@@ -169,12 +184,10 @@ class ProjectionBackbone(Backbone):
             dim=-1
         )
 
-        # zero out all feature vectors that correspond to out-of-boundary coordinates
         indices = (points_y * W + points_x).long()
-        indices_clamped = indices.clamp(min=0, max=H * W - 1)
-        index_mask = ((indices >= 0) & (indices < H * W)).unsqueeze(2)
-        values = point_feats.repeat(1, 1, 1, 4) * index_mask
-
+        indices_clamped = indices.clamp(min=0, max=H*W-1)
+        values = features.repeat(1,1,1,4) * index_mask.repeat(1,1,F,4)
+        
         # rasterize with a scatter mean procedure
         raster_sums = torch.zeros(B, T, F, H * W).to(self.device).scatter_add_(
             -1, 
@@ -187,10 +200,48 @@ class ProjectionBackbone(Backbone):
             torch.ones_like(indices_clamped).float().to(self.device)
         )
         rasters = raster_sums / raster_cnts.unsqueeze(2).clamp(min=1)
-
         return rasters
 
     def output_shape(self):
         return {"aggregated": ShapeSpec(channels=self.F, stride=1)}
+
+    def visualize_feats(self, img_feats, raster_feats, fused_feats):
+        """For debug mode only. Visualize the intermediate features coming out of the backbone
+
+        TODO: refactor this as a training hook
+        """
+        if not self.visualized:
+            self.visualized = True
+            index = np.random.choice(img_feats.shape[0])
+            fig, axes = plt.subplots(3, 1, figsize=(30, 30))
+            images = [
+                torch.cat([im for im in img_feats[index]], dim=-1).permute(1,2,0) / 255.,
+                torch.cat([im for im in raster_feats[index]], dim=-1).permute(1,2,0) / 255.,
+                fused_feats[index].permute(1,2,0) / 255.
+            ]
+            for ax, im in zip(axes, images):
+                ax.axis('off')
+                ax.imshow(im)
+            fig.savefig("figures/debug_feats.png", dpi=200)
+
+    def visualize_pcds(self, pcds, feats):
+        """For debug mode only. Visualize the pointclouds
+
+        TODO: refactor this as a training hook
+        """
+        if not self.visualized:
+            self.visualized = True
+            B, T, _, _ = pcds.shape
+            index = np.random.choice(B)
+            fig = plt.figure(figsize=(15, 20))
+            axes = [fig.add_subplot(1, T, t + 1, projection='3d') for t in range(T)]
+            for t, ax in enumerate(axes):
+                ax.axis('off')
+                ax.view_init(10, 100)
+                pcd = pcds[index, t]
+                colors = feats[index, t].T / 255.
+                ax.scatter3D(*pcd, c=colors, marker='.', s=0.5)
+            fig.savefig("figures/debug_pcd.png", dpi=200)
+
 
 

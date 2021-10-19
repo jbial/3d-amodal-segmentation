@@ -8,6 +8,7 @@ import numpy as np
 import detectron2.utils.comm as comm
 import matplotlib.pyplot as plt
 
+from detectron2.config import CfgNode
 from torch.utils.data import SubsetRandomSampler
 from detectron2.data.catalog import DatasetCatalog, MetadataCatalog
 from detectron2.utils.visualizer import ColorMode
@@ -53,7 +54,7 @@ class Trainer(DefaultTrainer):
         metadata = MetadataCatalog.get(dataset_name)
         for d in random.sample(loader, X * Y):
             img = cv2.imread(d["file_name"])
-            visualizer = Visualizer(img[:, :, ::-1], metadata=metadata, scale=0.25)
+            visualizer = Visualizer(img[:, :, ::-1], metadata=metadata, scale=0.5)
             out = visualizer.draw_dataset_dict(d)
             images.append(out.get_image()[:, :, ::-1])
 
@@ -100,7 +101,8 @@ class Trainer(DefaultTrainer):
 def setup(args):
     """Customize and setup configs
     """
-    cfg = get_cfg()
+    cfg = CfgNode(new_allowed=True)
+    cfg.merge_from_other_cfg(get_cfg())
     cfg = amodal3d_cfg_defaults(cfg)
     cfg.merge_from_file(args.config_file)
     cfg.merge_from_list(args.opts)
@@ -113,9 +115,10 @@ def setup(args):
 def main(args):
     cfg = setup(args)
 
-    if args.eval_only:
-        Trainer.visualize_data(cfg, cfg.DATASETS.TEST[0], grid_shape=(3, 3))
+    # visualize small data sample
+    Trainer.visualize_data(cfg, cfg.DATASETS.TEST[0], grid_shape=(2, 2))
 
+    if args.eval_only:
         model = Trainer.build_model(cfg)
         DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
             cfg.MODEL.WEIGHTS, resume=args.resume

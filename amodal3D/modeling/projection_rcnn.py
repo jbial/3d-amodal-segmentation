@@ -244,7 +244,8 @@ class ProjectionRCNN(nn.Module):
         Normalize, pad and batch the input images.
         """
         images = [x["images"].to(self.device) for x in batched_inputs]
-        images = [(x - self.pixel_mean) / self.pixel_std for x in images]
+        if not self.backbone.cfg.DEBUG_BACKBONE:
+            images = [(x - self.pixel_mean) / self.pixel_std for x in images]
         images = ImageList.from_tensors(images, self.backbone.size_divisibility)
         return images
 

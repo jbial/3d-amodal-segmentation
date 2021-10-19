@@ -35,7 +35,7 @@ class Amodal3DMapper:
             dict: Dict to be consumed by a model
         """
         images = np.array([utils.read_image(img) for img in dataset_dict["image_filenames"]])
-        depth_maps = np.array([np.load(depth) for depth in dataset_dict["depth_filenames"]])
+        depth_maps = np.array([np.load(depth) for depth in dataset_dict["depth_filenames"]])/6 - 4e-5
         range_matrices = np.array([self._range_proj_matrix(rng) for rng in dataset_dict["range_filenames"]])
         Ks, Rts = [np.array(l) for l in zip(*[
             self._camera_matrices(cams) 
@@ -86,4 +86,4 @@ class Amodal3DMapper:
         """Computes the range matrix for projection
         """
         rangemat = np.fromfile(range_file, dtype='float32').reshape((4, 4, 4))
-        return np.linalg.inv(rangemat[1, :, :]) @ rangemat[2, :, :]
+        return np.linalg.inv(rangemat[2, :, :]) @ rangemat[1, :, :]

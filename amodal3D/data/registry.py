@@ -166,6 +166,8 @@ class SAILVOSDataset:
                     range_filenames = list(map(lambda fn: path_parser(fn, 4), [range_matrices[ts] for ts in seq]))
                     vis_filenames = list(map(lambda fn: path_parser(fn, 2), [visibles[ts] for ts in seq]))
 
+                    vis_objs = np.unique(np.load(visibles[seq[self.window_size // 2]]))
+
                     img_obj = {
                         "image_filenames": img_filenames,
                         "depth_filenames": depth_filenames,
@@ -188,6 +190,11 @@ class SAILVOSDataset:
 
                         # central frame in the window serves as the annotation
                         obj_file = obj[seq[self.window_size // 2]]
+                        obj_id = obj_file.split('/')[-2].split('_')[0]
+
+                        if int(obj_id) not in vis_objs:  # check if object is even visible
+                            continue
+
                         bitmask = cv2.imread(obj_file)
                         anno = {
                             "mask_filename": path_parser(obj_file, 2),
