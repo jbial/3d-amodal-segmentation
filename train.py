@@ -64,7 +64,7 @@ class Trainer(DefaultTrainer):
         
         plt.imshow(image_grid)
         plt.axis('off')
-        fig.savefig(f"figures/images_{dataset_name}.png")
+        fig.savefig(f"figures/test_{dataset_name}.png")
 
     @classmethod
     def visualize_eval_results(cls, cfg, dataset_name, model, grid_shape=(3, 3)):
@@ -116,7 +116,7 @@ def main(args):
     cfg = setup(args)
 
     # visualize small data sample
-    Trainer.visualize_data(cfg, cfg.DATASETS.TEST[0], grid_shape=(2, 2))
+    Trainer.visualize_data(cfg, cfg.DATASETS.TEST[0], grid_shape=(1, 1))
 
     if args.eval_only:
         model = Trainer.build_model(cfg)
@@ -131,7 +131,7 @@ def main(args):
             cfg, 
             cfg.DATASETS.TEST[0], 
             model, 
-            grid_shape=(3, 3)
+            grid_shape=(2, 2)
         )
 
         return res

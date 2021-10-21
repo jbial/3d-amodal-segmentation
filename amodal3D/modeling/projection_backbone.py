@@ -66,8 +66,15 @@ class ProjectionBackbone(Backbone):
         """
         if self.cfg.DEBUG_BACKBONE:
             return lambda points, features: features
+
         # TODO: create point processing model
-        return lambda points, features: features
+        simple_mlp = nn.Sequential(
+            nn.Linear(3 + self.F, 3),
+            nn.ReLU(inplace=True),
+            nn.Linear(3, self.F)
+        ).to(self.device)        
+        
+        return lambda points, features: simple_mlp(torch.cat([points, features], dim=2).permute(0,1,3,2)).permute(0,1,3,2)
 
     def _build_aggregator(self):
         """Aggregates features after the backprojection step
@@ -75,16 +82,14 @@ class ProjectionBackbone(Backbone):
         if self.cfg.DEBUG_BACKBONE:
             # simply average over temporal dimension
             return lambda x: x.reshape(-1, self.window_size, 3, self.H_feats, self.W_feats).mean(axis=1)
+
         aggregator = nn.Sequential(
            nn.Conv2d(self.F * self.cfg.SAILVOS.WINDOW_SIZE, self.F, kernel_size=3, padding=1),
            nn.BatchNorm2d(self.F),
            nn.ReLU(inplace=True),
            nn.Conv2d(self.F, self.F, kernel_size=3, padding=1)
-        )
+        ).to(self.device)
 
-        # init aggregator weights to zero so projection processing
-        # starts out as the identity function
-        # TODO
         return aggregator
 
     def forward(self, images, depth, K, Rt, gproj):
@@ -95,14 +100,14 @@ class ProjectionBackbone(Backbone):
         B, T, C, H, W = images.shape
         features = self.encoder(images.view(B * T, C, H, W)).view(B, T, -1, self.H_feats, self.W_feats)
 
-        # project to 3D, then project back to 2D in a single camera view
-        pcds = self._to_pcd(depth, Rt, gproj)
-        point_feats = self.point_model(pcds, features.reshape(B, T, -1, self.H_feats * self.W_feats))
+        ## project to 3D, then project back to 2D in a single camera view
+        #pcds = self._to_pcd(depth, Rt, gproj)
+        #point_feats = self.point_model(pcds[..., :3, :], features.reshape(B, T, -1, self.H_feats * self.W_feats))
 
-        projections = self._to_grid(pcds, point_feats, K, Rt).view(B, -1, self.H_feats, self.W_feats)
+        #projections = self._to_grid(pcds, point_feats, K, Rt).view(B, -1, self.H_feats, self.W_feats)
 
         # fuse features along sequence length dimension
-        agg = self.aggregator(projections + features.reshape(B, -1, self.H_feats, self.W_feats))
+        agg = self.aggregator(features.reshape(B, -1, self.H_feats, self.W_feats))
 
         if self.cfg.DEBUG_BACKBONE:
             self.visualize_feats(features, projections.reshape(B, T, C, self.H_feats, self.W_feats), agg)
