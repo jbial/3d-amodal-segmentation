@@ -1,5 +1,5 @@
 MODEL:
-  DEVICE: 'cuda'
+  DEVICE: 'cpu'
   META_ARCHITECTURE: "ProjectionRCNN"
   BACKBONE:
     NAME: "ProjectionBackbone"
@@ -57,4 +57,4 @@ INPUT:
 VIS_PERIOD: 100
 VERSION: 2
 SEED: 3476
-DEBUG_BACKBONE: False
+DEBUG_BACKBONE: True

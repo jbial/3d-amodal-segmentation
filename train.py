@@ -116,7 +116,7 @@ def main(args):
     cfg = setup(args)
 
     # visualize small data sample
-    Trainer.visualize_data(cfg, cfg.DATASETS.TEST[0], grid_shape=(1, 1))
+    Trainer.visualize_data(cfg, cfg.DATASETS.TEST[0], grid_shape=(4, 4))
 
     if args.eval_only:
         model = Trainer.build_model(cfg)
