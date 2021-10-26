@@ -56,7 +56,7 @@ class Trainer(DefaultTrainer):
             img = cv2.imread(d["file_name"])
             img = cv2.resize(
                 img, 
-                dsize=[int(d / 2) for d in img.shape[:2]][::-1], 
+                dsize=[int(d * cfg.SAILVOS.SCALE_RESOLUTION) for d in img.shape[:2]][::-1], 
                 interpolation=cv2.INTER_LINEAR
             )
             visualizer = Visualizer(img[:, :, ::-1], metadata=metadata, scale=0.5)
@@ -69,7 +69,7 @@ class Trainer(DefaultTrainer):
         
         plt.imshow(image_grid)
         plt.axis('off')
-        fig.savefig(f"figures/test_{dataset_name}.png")
+        fig.savefig(f"figures/raw_{dataset_name}.png")
 
     @classmethod
     def visualize_eval_results(cls, cfg, dataset_name, model, grid_shape=(3, 3)):
@@ -85,6 +85,11 @@ class Trainer(DefaultTrainer):
             model.eval()
             for d, _ in zip(loader, range(X*Y)):
                 im = cv2.imread(d[0]["file_name"])
+                img = cv2.resize(
+                    img, 
+                    dsize=[int(d * cfg.SAILVOS.SCALE_RESOLUTION) for d in img.shape[:2]][::-1], 
+                    interpolation=cv2.INTER_LINEAR
+                )
                 outputs = model(d)  # format is documented at https://detectron2.readthedocs.io/tutorials/models.html#model-output-format
                 v = Visualizer(im[:, :, ::-1],
                     metadata=metadata, 
@@ -100,7 +105,7 @@ class Trainer(DefaultTrainer):
 
         plt.imshow(image_grid)
         plt.axis('off')
-        fig.savefig(f"figures/eval_images_{dataset_name}.png")
+        fig.savefig(f"figures/results_{dataset_name}.png")
 
 
 def setup(args):

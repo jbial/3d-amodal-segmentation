@@ -1,6 +1,8 @@
 """Script for building the projection backbone
 """
 import torch
+from torch import functional
+import torchvision
 import torch.nn as nn
 import numpy as np
 import torch.nn.functional as F
@@ -9,6 +11,7 @@ import matplotlib.pyplot as plt
 
 from detectron2.modeling import BACKBONE_REGISTRY, Backbone, ShapeSpec
 from torch_scatter import scatter_max
+from detectron2 import model_zoo
 
 
 @BACKBONE_REGISTRY.register()
@@ -26,7 +29,10 @@ class ProjectionBackbone(Backbone):
         # for visualization/debugging
         self.visualized = False
 
-        self.H, self.W = 800, 1280
+        self.H, self.W = (
+            int(cfg.INPUT.BASE_H * cfg.SAILVOS.SCALE_RESOLUTION), 
+            int(cfg.INPUT.BASE_W * cfg.SAILVOS.SCALE_RESOLUTION)
+        )
         self.F, self.H_feats, self.W_feats = self.get_output_spatial_res()
 
         # point processing model
@@ -40,7 +46,8 @@ class ProjectionBackbone(Backbone):
         self.ndc_X, self.ndc_Y = [c.to(self.device) for c in coords[2:]]
 
     def get_output_spatial_res(self):
-        return self.encoder(torch.rand(1, 3, self.H, self.W)).shape[-3:]
+        rand_in = torch.rand(1, 3, self.H, self.W, device=self.device)
+        return self.encoder(rand_in).shape[-3:]
 
     def _get_coords(self, H, W):
         u, v = np.arange(0, W), np.arange(0, H)
@@ -58,8 +65,13 @@ class ProjectionBackbone(Backbone):
             # hardcoded target size
             return lambda x: F.interpolate(x, size=(self.H // 8, self.W // 8), mode='bilinear')
 
-        pretrained = models.resnet18(pretrained=False)
-        return nn.Sequential(*list(pretrained.children())[:-4])
+        # only take p3 from R50 FPN for now
+        model = torchvision.models.detection.fasterrcnn_resnet50_fpn(
+            pretrained=True, 
+            trainable_backbone_layers=5  # all backbone layers are unfrozen
+        )
+        submodel = nn.Sequential(*list(model.backbone.body.children())[:-3])
+        return submodel
 
     def _build_point_processor(self):
         """Builds point cloud feature model
@@ -74,7 +86,10 @@ class ProjectionBackbone(Backbone):
             nn.Linear(3, self.F)
         ).to(self.device)        
         
-        return lambda points, features: simple_mlp(torch.cat([points, features], dim=2).permute(0,1,3,2)).permute(0,1,3,2)
+        return (
+            lambda points, features: 
+            simple_mlp(torch.cat([points, features], dim=2).permute(0,1,3,2)).permute(0,1,3,2)
+        )
 
     def _build_fusion_model(self):
         """Aggregates features after the backprojection step
@@ -85,22 +100,22 @@ class ProjectionBackbone(Backbone):
 
         fuser = nn.Sequential(
            nn.Conv2d(self.F * self.cfg.SAILVOS.WINDOW_SIZE, self.F // 2, kernel_size=3, padding=1),
-           nn.BatchNorm2d(self.F),
+           nn.BatchNorm2d(self.F // 2),
            nn.ReLU(inplace=True),
            nn.Conv2d(self.F // 2, self.F, kernel_size=3, padding=1)
         ).to(self.device)
-
         return fuser
 
     def forward(self, images, depth, K, Rt, gproj):
         K = K.float()
         Rt = Rt.float()
 
-        print(images.shape)
-
         # extract features from images and downsample depth maps
         B, T, C, H, W = images.shape
-        features = self.encoder(images.view(B * T, C, H, W)).view(B, T, -1, self.H_feats, self.W_feats)
+        features = self.encoder(images.view(B * T, C, H, W))
+
+        # for now only use the p3 level features
+        features = features.view(B, T, -1, self.H_feats, self.W_feats)
 
         # downsmaple the depth maps with nearest neighbor (bilinear does not work)
         downsampled_depth = F.interpolate(depth, size=(self.H_feats, self.W_feats), mode='nearest')

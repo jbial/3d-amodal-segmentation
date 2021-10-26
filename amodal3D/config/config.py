@@ -12,5 +12,9 @@ def amodal3d_cfg_defaults(cfg):
     cfg.SAILVOS.TRAIN_TEST_SPLIT = 0.9
     cfg.SAILVOS.SCALE_RESOLUTION = 0.5
 
+    cfg.MODEL.PRETRAINED_MODEL = "COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_1x.yaml"
+    cfg.INPUT.BASE_H = 800
+    cfg.INPUT.BASE_W = 1280
+
     return cfg
 
