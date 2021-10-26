@@ -1,1 +1,1 @@
-from .utils import encode_seg_mask, blob_bbox
+from .utils import blob_bbox, extract_annotation

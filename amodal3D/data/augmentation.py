@@ -78,12 +78,12 @@ def apply_augmentations(augmentations: List[Union[Transform, Augmentation]], inp
 
 
 if __name__ == '__main__':
-    from detectron2.data.transforms import RandomFlip, ResizeShortestEdge 
+    from detectron2.data.transforms import ResizeTransform
 
     print("Testing augmentations")
 
-    tfms = [RandomFlip()]
-    images, tfms = apply_augmentations(tfms, np.random.rand(5, 50, 100, 3))
+    tfms = [ResizeTransform(800, 1280, 400, 640)]
+    images, tfms = apply_augmentations(tfms, np.random.rand(5, 800, 1280, 3))
 
     print(images.shape)
     print(tfms)

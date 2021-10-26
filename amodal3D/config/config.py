@@ -10,6 +10,7 @@ def amodal3d_cfg_defaults(cfg):
     cfg.SAILVOS.WINDOW_SIZE = 5
     cfg.SAILVOS.FRAME_STRIDES = [1,2,4,6]
     cfg.SAILVOS.TRAIN_TEST_SPLIT = 0.9
+    cfg.SAILVOS.SCALE_RESOLUTION = 0.5
 
     return cfg
 

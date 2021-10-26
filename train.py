@@ -54,6 +54,11 @@ class Trainer(DefaultTrainer):
         metadata = MetadataCatalog.get(dataset_name)
         for d in random.sample(loader, X * Y):
             img = cv2.imread(d["file_name"])
+            img = cv2.resize(
+                img, 
+                dsize=[int(d / 2) for d in img.shape[:2]][::-1], 
+                interpolation=cv2.INTER_LINEAR
+            )
             visualizer = Visualizer(img[:, :, ::-1], metadata=metadata, scale=0.5)
             out = visualizer.draw_dataset_dict(d)
             images.append(out.get_image()[:, :, ::-1])

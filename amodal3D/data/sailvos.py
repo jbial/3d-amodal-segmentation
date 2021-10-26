@@ -5,8 +5,10 @@ import torch
 import logging
 import numpy as np
 import detectron2.data.detection_utils as utils
+import torch.nn.functional as F
 
 from .augmentation import apply_augmentations
+from .transforms import ResizeTransform
 
 
 class Amodal3DMapper:
@@ -16,9 +18,7 @@ class Amodal3DMapper:
     """
 
     def __init__(self, cfg, is_train=True):
-        self.augmentations = utils.build_augmentation(cfg, is_train)
-
-        # get rid of resize transform, all images are the same size
+        self.augmentations = [ResizeTransform(800, 1280, 400, 640)]
         self.augmentations.pop()
 
         self.is_train = is_train

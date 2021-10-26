@@ -6,19 +6,20 @@ import logging
 import os
 import cv2
 import json
+import pycocotools
 import numpy as np
 
 from detectron2.data import MetadataCatalog, DatasetCatalog
 from detectron2.structures import BoxMode
 from tqdm import tqdm
 from detectron2.config import get_cfg
-from amodal3D.utils.utils import blob_bbox, encode_seg_mask
+from amodal3D.utils.utils import extract_annotation
 from amodal3D.config.config import amodal3d_cfg_defaults 
 
 
 class SAILVOSDataset:
 
-    def __init__(self, dataroot, train_val_split=0.8, window_size=5, frame_strides=[1]):
+    def __init__(self, dataroot, train_val_split=0.8, window_size=5, frame_strides=[1], scale=1.0):
         """Processes scene filenames and data into JSON format
         """
         self.logger = logging.getLogger(__name__)
@@ -36,6 +37,7 @@ class SAILVOSDataset:
 
         # hardcoded (property of dataset)
         self.H, self.W = 800, 1280  
+        self.scale = scale
 
         # for frame/sequence sampling
         self.window_size = window_size
@@ -176,8 +178,8 @@ class SAILVOSDataset:
                         "visible_filenames": vis_filenames,
                         # metadata
                         "scene_name": scene,
-                        "height": self.H,
-                        "width": self.W,
+                        "height": int(self.H * self.scale),
+                        "width": int(self.W * self.scale),
                         "start": int(seq[0]),
                         "end": int(seq[-1]),
                         "stride": int(self.frame_strides[j])
@@ -195,10 +197,8 @@ class SAILVOSDataset:
                         if int(obj_id) not in vis_objs:  # check if object is even visible
                             continue
 
-                        bitmask = cv2.imread(obj_file)
                         anno = {
-                            "mask_filename": path_parser(obj_file, 2),
-                            "bbox": blob_bbox(bitmask),
+                            "mask_filename": obj_file,
                             "category_id": self.label2idx[self.label_map(obj_file.split('/')[-2])]
                         }
                         annos.append(anno)
@@ -275,11 +275,12 @@ class SAILVOSDataset:
             annos = [
                 {
                     "is_crowd": 0,
-                    "bbox": anno["bbox"],
                     "bbox_mode": BoxMode.XYXY_ABS,
                     "category_id": anno["category_id"],
-                    "mask_filename": os.path.join(data["scene_name"], anno["mask_filename"]),
-                    "segmentation": encode_seg_mask(os.path.join(data["scene_name"], anno["mask_filename"]))
+                    **{k: v for k, v in zip(
+                        ["segmentation", "bbox"],
+                        extract_annotation(anno["mask_filename"], self.scale)
+                    )}
                 } for anno in data["annotations"]
             ]
             record["annotations"] = annos
@@ -303,7 +304,8 @@ if __name__.endswith("registry"):
         "datasets", 
         train_val_split=cfg.SAILVOS.TRAIN_TEST_SPLIT,
         window_size=cfg.SAILVOS.WINDOW_SIZE, 
-        frame_strides=cfg.SAILVOS.FRAME_STRIDES
+        frame_strides=cfg.SAILVOS.FRAME_STRIDES,
+        scale=cfg.SAILVOS.SCALE_RESOLUTION
     )
     for ds_name in ["sailvos_train", "sailvos_val"]:
         if ds_name in DatasetCatalog.list():

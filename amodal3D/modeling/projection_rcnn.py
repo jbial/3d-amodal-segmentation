@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 
 from typing import Dict, List, Optional, Tuple
@@ -239,14 +240,30 @@ class ProjectionRCNN(nn.Module):
         else:
             return results
 
+    def resize_batch(self, images):
+        """Resize images according to scale parameter
+        """
+        B, T, C, H, W = images.shape
+        new_shape = [int(s * self.backbone.cfg.SAILVOS.SCALE_RESOLUTION) for s in (H, W)]
+        resized_ims = F.interpolate(
+            images.reshape(B*T, C, H, W).float(),
+            new_shape, 
+            mode='bilinear', 
+            align_corners=False
+        )
+        return resized_ims.view(B, T, C, *new_shape)
+
     def preprocess_image(self, batched_inputs: List[Dict[str, torch.Tensor]]):
         """
         Normalize, pad and batch the input images.
         """
+        
         images = [x["images"].to(self.device) for x in batched_inputs]
-        if not self.backbone.cfg.DEBUG_BACKBONE:
-            images = [(x - self.pixel_mean) / self.pixel_std for x in images]
         images = ImageList.from_tensors(images, self.backbone.size_divisibility)
+        images.tensor = self.resize_batch(images.tensor)
+        if not self.backbone.cfg.DEBUG_BACKBONE:
+            images.tensor = (images.tensor - images.tensor.mean(dim=(-1, -2), keepdims=True)) \
+                          /  images.tensor.std(dim=(-1, -2), keepdims=True)
         return images
 
     @staticmethod

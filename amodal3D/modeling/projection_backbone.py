@@ -96,6 +96,8 @@ class ProjectionBackbone(Backbone):
         K = K.float()
         Rt = Rt.float()
 
+        print(images.shape)
+
         # extract features from images and downsample depth maps
         B, T, C, H, W = images.shape
         features = self.encoder(images.view(B * T, C, H, W)).view(B, T, -1, self.H_feats, self.W_feats)

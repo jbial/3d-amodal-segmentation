@@ -6,17 +6,6 @@ import numpy as np
 import detectron2.data.detection_utils as utils
 
 
-def encode_seg_mask(mask_filename):
-    """Encodes bitmask into COCO format
-    """
-    # read and encode instance mask for segmentation label
-    bitmask = utils.read_image(mask_filename)
-    encoded_mask = pycocotools.mask.encode(
-        np.array((bitmask/255).astype('bool'), order='F')
-    )
-    return encoded_mask 
-
-
 def blob_bbox(bitmask):
     """Gets bounding box for a single blob
     """
@@ -24,3 +13,16 @@ def blob_bbox(bitmask):
     blob_coords = blob[:,[1,0]]
     x, y, w, h = cv2.boundingRect(blob_coords)
     return x, y, x + w, y + h
+
+
+def extract_annotation(annotation_file, scale):
+    """Extracts encoded instance mask and bounding box for a single annotation instance
+    """
+    bitmask = utils.read_image(annotation_file)
+    new_shape = [int(s * scale) for s in bitmask.shape[:2]][::-1]
+    bitmask = cv2.resize(bitmask, dsize=new_shape, interpolation=cv2.INTER_NEAREST)
+    seg_mask = pycocotools.mask.encode(
+        np.array((bitmask/255).astype('bool'), order='F')
+    )
+    bbox = blob_bbox(bitmask)
+    return seg_mask, bbox
