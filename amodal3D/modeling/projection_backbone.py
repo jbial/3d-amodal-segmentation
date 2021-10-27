@@ -71,7 +71,7 @@ class ProjectionBackbone(Backbone):
             trainable_backbone_layers=5  # all backbone layers are unfrozen
         )
         submodel = nn.Sequential(*list(model.backbone.body.children())[:-3])
-        return submodel
+        return submodel.to(self.device)
 
     def _build_point_processor(self):
         """Builds point cloud feature model
