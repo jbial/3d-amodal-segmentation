@@ -236,7 +236,7 @@ class ProjectionBackbone(Backbone):
         )
 
         rasters = torch.gather(
-            torch.cat([values, torch.zeros(B, T, F, 1)], dim=-1),
+            torch.cat([values, torch.zeros(B, T, F, 1).to(self.device)], dim=-1),
             dim=-1,
             index=visible_indices.unsqueeze(2).repeat(1,1,F,4)
         )
