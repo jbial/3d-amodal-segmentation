@@ -121,7 +121,6 @@ class ProjectionRCNN(nn.Module):
             vis_img = vis_img.transpose(2, 0, 1)
             vis_name = "Left: GT bounding boxes;  Right: Predicted proposals"
             storage.put_image(vis_name, vis_img)
-            break  # only visualize one image in a batch
 
     def forward(self, batched_inputs: List[Dict[str, torch.Tensor]]):
         """
