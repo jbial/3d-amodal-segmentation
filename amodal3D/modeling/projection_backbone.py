@@ -232,7 +232,7 @@ class ProjectionBackbone(Backbone):
             depth_values,
             indices_clamped,
             dim=-1,
-            out=torch.full((B, T, H * W), float('-inf'))
+            out=torch.full((B, T, H * W), float('-inf'), device=self.device)
         )
 
         rasters = torch.gather(
@@ -284,6 +284,8 @@ class ProjectionBackbone(Backbone):
         TODO: refactor this as a training hook
         """
         # visualize random point sequence
+        pcds = pcds.detach().cpu().numpy()
+        feats = feats.detach().cpu().numpy()
         B, T, _, _ = pcds.shape
         index = np.random.choice(B)
         fig = plt.figure(figsize=(15, 20))
