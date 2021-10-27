@@ -56,7 +56,7 @@ class Trainer(DefaultTrainer):
             img = cv2.imread(d["file_name"])
             img = cv2.resize(
                 img, 
-                dsize=[int(d * cfg.SAILVOS.SCALE_RESOLUTION) for d in img.shape[:2]][::-1], 
+                dsize=tuple([int(d * cfg.SAILVOS.SCALE_RESOLUTION) for d in img.shape[:2]][::-1]), 
                 interpolation=cv2.INTER_LINEAR
             )
             visualizer = Visualizer(img[:, :, ::-1], metadata=metadata, scale=0.5)
@@ -87,7 +87,7 @@ class Trainer(DefaultTrainer):
                 im = cv2.imread(d[0]["file_name"])
                 img = cv2.resize(
                     img, 
-                    dsize=[int(d * cfg.SAILVOS.SCALE_RESOLUTION) for d in img.shape[:2]][::-1], 
+                    dsize=tuple([int(d * cfg.SAILVOS.SCALE_RESOLUTION) for d in img.shape[:2]][::-1]), 
                     interpolation=cv2.INTER_LINEAR
                 )
                 outputs = model(d)  # format is documented at https://detectron2.readthedocs.io/tutorials/models.html#model-output-format
