@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+import cv2
 
 from typing import Dict, List, Optional, Tuple
 from detectron2.config import configurable
@@ -14,7 +15,6 @@ from detectron2.modeling.postprocessing import detector_postprocess
 from detectron2.modeling.proposal_generator import build_proposal_generator
 from detectron2.modeling.roi_heads import build_roi_heads
 from detectron2.modeling import META_ARCH_REGISTRY
-from amodal3D.modeling.projection_backbone import ProjectionBackbone
 
 __all__ = ["ProjectionRCNN"]
 
@@ -108,6 +108,11 @@ class ProjectionRCNN(nn.Module):
             img = input["images"]
             T, _, _, _ = img.shape
             img = convert_image_to_rgb(img[T // 2, ...].permute(1, 2, 0), self.input_format)
+            img = cv2.resize(
+                img, 
+                dsize=tuple([int(d * self.backbone.cfg.SAILVOS.SCALE_RESOLUTION) for d in img.shape[:2]][::-1]), 
+                interpolation=cv2.INTER_LINEAR
+            )
             v_gt = Visualizer(img, None)
             v_gt = v_gt.overlay_instances(boxes=input["instances"].gt_boxes)
             anno_img = v_gt.get_image()
@@ -153,6 +158,12 @@ class ProjectionRCNN(nn.Module):
             gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
         else:
             gt_instances = None
+
+        # from pprint import pprint
+        # sample = gt_instances[0]
+        # print(sample.gt_boxes, sample.gt_masks, sample.gt_classes)
+        # print(sample.gt_masks)
+        # cdscsdc
 
         # feed in the inputs
         projs = [list(l) for l in zip(*[
