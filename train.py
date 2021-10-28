@@ -8,8 +8,8 @@ import numpy as np
 import detectron2.utils.comm as comm
 import matplotlib.pyplot as plt
 
+from pprint import pprint
 from detectron2.config import CfgNode
-from torch.utils.data import SubsetRandomSampler
 from detectron2.data.catalog import DatasetCatalog, MetadataCatalog
 from detectron2.utils.visualizer import ColorMode
 from detectron2.checkpoint import DetectionCheckpointer
@@ -21,7 +21,6 @@ from detectron2.utils.logger import setup_logger
 from detectron2.evaluation import COCOEvaluator, verify_results
 from amodal3D.config import amodal3d_cfg_defaults  
 from amodal3D.data import Amodal3DMapper
-
 
 
 class Trainer(DefaultTrainer):
@@ -52,6 +51,7 @@ class Trainer(DefaultTrainer):
         images = []
         loader = DatasetCatalog.get(dataset_name)
         metadata = MetadataCatalog.get(dataset_name)
+        print(f"[VISUALIZE DATA] {dataset_name} metadata: {metadata}")
         for d in random.sample(loader, X * Y):
             img = cv2.imread(d["file_name"])
             img = cv2.resize(

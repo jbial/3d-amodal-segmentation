@@ -159,12 +159,6 @@ class ProjectionRCNN(nn.Module):
         else:
             gt_instances = None
 
-        # from pprint import pprint
-        # sample = gt_instances[0]
-        # print(sample.gt_boxes, sample.gt_masks, sample.gt_classes)
-        # print(sample.gt_masks)
-        # cdscsdc
-
         # feed in the inputs
         projs = [list(l) for l in zip(*[
             (x["depth_maps"].to(self.device),
@@ -272,8 +266,7 @@ class ProjectionRCNN(nn.Module):
         images = ImageList.from_tensors(images, self.backbone.size_divisibility)
         images.tensor = self.resize_batch(images.tensor)
         if not self.backbone.cfg.DEBUG_BACKBONE:
-            images.tensor = (images.tensor - images.tensor.mean(dim=(-1, -2), keepdims=True)) \
-                          /  images.tensor.std(dim=(-1, -2), keepdims=True)
+            images.tensor = (images.tensor - self.pixel_mean) / self.pixel_std
         return images
 
     @staticmethod

@@ -293,7 +293,7 @@ class SAILVOSDataset:
         DatasetCatalog.register(
             dataset_name, lambda: self.load(dataset_name)
         )
-        metadata = {"thing_classes": list(self.label2idx)}
+        metadata = {"thing_classes": self.idx2label}
         MetadataCatalog.get(dataset_name).set(**metadata)
 
 
