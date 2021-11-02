@@ -10,8 +10,8 @@ MODEL:
     NAME: "RPN"
   RPN:
     IN_FEATURES: ["aggregated"]
-    PRE_NMS_TOPK_TRAIN: 4000  # Per FPN level
-    PRE_NMS_TOPK_TEST: 2000  # Per FPN level
+    PRE_NMS_TOPK_TRAIN: 2000  # Per FPN level
+    PRE_NMS_TOPK_TEST: 1000  # Per FPN level
     POST_NMS_TOPK_TRAIN: 2000
     POST_NMS_TOPK_TEST: 1000
     BBOX_REG_LOSS_TYPE: "smooth_l1"
@@ -40,8 +40,8 @@ DATASETS:
   TRAIN: ("sailvos_val",)
   TEST: ("sailvos_val",)
 SOLVER:
-  IMS_PER_BATCH: 4
-  BASE_LR: 0.03
+  IMS_PER_BATCH: 1
+  BASE_LR: 1e-4
   #STEPS: (2000,)
   MAX_ITER: 3000
   WARMUP_ITERS: 1000
@@ -49,9 +49,6 @@ SOLVER:
 DATALOADER:
   NUM_WORKERS: 4
 INPUT:
-  MAX_SIZE_TRAIN: 640
-  MIN_SIZE_TEST: 400
-  MAX_SIZE_TEST: 640
   MASK_FORMAT: 'bitmask'
   RANDOM_FLIP: 'none'
   FORMAT: 'RGB'

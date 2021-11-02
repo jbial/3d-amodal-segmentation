@@ -66,7 +66,7 @@ class ProjectionBackbone(Backbone):
             return lambda x: F.interpolate(x, size=(self.H // 8, self.W // 8), mode='bilinear')
 
         # only take p3 from R50 FPN for now
-        model = torchvision.models.detection.fasterrcnn_resnet50_fpn(
+        model = torchvision.models.detection.maskrcnn_resnet50_fpn(
             pretrained=True, 
             trainable_backbone_layers=5  # all backbone layers are unfrozen
         )
@@ -79,15 +79,6 @@ class ProjectionBackbone(Backbone):
         if self.cfg.DEBUG_BACKBONE:
             return lambda points, features: features
 
-        # TODO: create point processing model
-        simple_mlp = nn.Sequential(
-            nn.Linear(3 + self.F, 64),
-            nn.ReLU(inplace=True),
-            nn.Linear(64, 32),
-            nn.ReLU(inplace=True),
-            nn.Linear(32, self.F)
-        ).to(self.device)        
-        
         return (
             lambda points, features: 
             features
@@ -101,13 +92,16 @@ class ProjectionBackbone(Backbone):
             return lambda x: x.reshape(-1, self.window_size, 3, self.H_feats, self.W_feats).mean(axis=1)
 
         fuser = nn.Sequential(
-           nn.Conv2d(self.F * self.cfg.SAILVOS.WINDOW_SIZE, self.F // 2, kernel_size=3, padding=1),
-           nn.BatchNorm2d(self.F // 2),
-           nn.ReLU(inplace=True),
-           nn.Conv2d(self.F // 2, self.F // 2, kernel_size=3, padding=1),
-           nn.BatchNorm2d(self.F // 2),
-           nn.ReLU(inplace=True),
-           nn.Conv2d(self.F // 2, self.F, kernel_size=3, padding=1)
+            nn.Conv2d(self.F * self.cfg.SAILVOS.WINDOW_SIZE, self.F // 4, kernel_size=1, padding=0),
+            nn.BatchNorm2d(self.F // 4),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(self.F // 4, self.F // 2, kernel_size=3, padding=1),
+            nn.BatchNorm2d(self.F // 2),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(self.F // 2, self.F // 4, kernel_size=1, padding=0),
+            nn.BatchNorm2d(self.F // 4),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(self.F // 4, self.F, kernel_size=3, padding=1),
         ).to(self.device)
         return fuser
 
@@ -148,7 +142,7 @@ class ProjectionBackbone(Backbone):
             )
 
         # append temporally aggregated features with features fom central frame
-        residual_feats = fused_feats + features[:, T // 2, :, :, :]
+        residual_feats = features[:, T // 2, :, :, :] #+ fused_feats
 
         return {"aggregated": residual_feats}
 
