@@ -85,9 +85,9 @@ class Trainer(DefaultTrainer):
             model.eval()
             for d, _ in zip(loader, range(X*Y)):
                 im = cv2.imread(d[0]["file_name"])
-                img = cv2.resize(
-                    img, 
-                    dsize=tuple([int(d * cfg.SAILVOS.SCALE_RESOLUTION) for d in img.shape[:2]][::-1]), 
+                im = cv2.resize(
+                    im, 
+                    dsize=tuple([int(d * cfg.SAILVOS.SCALE_RESOLUTION) for d in im.shape[:2]][::-1]), 
                     interpolation=cv2.INTER_LINEAR
                 )
                 outputs = model(d)  # format is documented at https://detectron2.readthedocs.io/tutorials/models.html#model-output-format
@@ -126,7 +126,7 @@ def main(args):
     cfg = setup(args)
 
     # visualize small data sample
-    Trainer.visualize_data(cfg, cfg.DATASETS.TEST[0], grid_shape=(4, 4))
+    Trainer.visualize_data(cfg, cfg.DATASETS.TEST[0], grid_shape=(1, 1))
 
     if args.eval_only:
         model = Trainer.build_model(cfg)

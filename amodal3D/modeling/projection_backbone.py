@@ -81,14 +81,16 @@ class ProjectionBackbone(Backbone):
 
         # TODO: create point processing model
         simple_mlp = nn.Sequential(
-            nn.Linear(3 + self.F, 3),
+            nn.Linear(3 + self.F, 64),
             nn.ReLU(inplace=True),
-            nn.Linear(3, self.F)
+            nn.Linear(64, 32),
+            nn.ReLU(inplace=True),
+            nn.Linear(32, self.F)
         ).to(self.device)        
         
         return (
             lambda points, features: 
-            simple_mlp(torch.cat([points, features], dim=2).permute(0,1,3,2)).permute(0,1,3,2)
+            features
         )
 
     def _build_fusion_model(self):
@@ -100,6 +102,9 @@ class ProjectionBackbone(Backbone):
 
         fuser = nn.Sequential(
            nn.Conv2d(self.F * self.cfg.SAILVOS.WINDOW_SIZE, self.F // 2, kernel_size=3, padding=1),
+           nn.BatchNorm2d(self.F // 2),
+           nn.ReLU(inplace=True),
+           nn.Conv2d(self.F // 2, self.F // 2, kernel_size=3, padding=1),
            nn.BatchNorm2d(self.F // 2),
            nn.ReLU(inplace=True),
            nn.Conv2d(self.F // 2, self.F, kernel_size=3, padding=1)
