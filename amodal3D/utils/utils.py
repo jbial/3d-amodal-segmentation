@@ -15,10 +15,9 @@ def blob_bbox(bitmask):
     return x, y, x + w, y + h
 
 
-def extract_annotation(annotation_file, scale):
+def extract_annotation(bitmask, scale):
     """Extracts encoded instance mask and bounding box for a single annotation instance
     """
-    bitmask = cv2.imread(annotation_file)
     new_shape = tuple([int(s * scale) for s in bitmask.shape[:2]][::-1])
     bitmask = cv2.resize(bitmask, dsize=new_shape, interpolation=cv2.INTER_NEAREST)
     seg_mask = pycocotools.mask.encode(

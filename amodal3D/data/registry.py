@@ -1,6 +1,7 @@
 """Register SAILVOS data along with custom metadata
 """
 import glob
+from pickle import bytes_types
 import re
 import logging
 import os
@@ -19,7 +20,15 @@ from amodal3D.config.config import amodal3d_cfg_defaults
 
 class SAILVOSDataset:
 
-    def __init__(self, dataroot, train_val_split=0.8, window_size=5, frame_strides=[1], scale=1.0):
+    def __init__(
+        self, 
+        dataroot, 
+        train_val_split=0.8, 
+        window_size=5, 
+        frame_strides=[1], 
+        scale=1.0,
+        occ_thresh=0.25
+    ):
         """Processes scene filenames and data into JSON format
         """
         self.logger = logging.getLogger(__name__)
@@ -42,6 +51,7 @@ class SAILVOSDataset:
         # for frame/sequence sampling
         self.window_size = window_size
         self.frame_strides = frame_strides
+        self.occ_thresh = occ_thresh
 
         # extract all the filenames for the scene
         self.scene_data = [self._extract_filenames(scene) for scene in self.scene_dirs]
@@ -168,14 +178,13 @@ class SAILVOSDataset:
                     range_filenames = list(map(lambda fn: path_parser(fn, 4), [range_matrices[ts] for ts in seq]))
                     vis_filenames = list(map(lambda fn: path_parser(fn, 2), [visibles[ts] for ts in seq]))
 
-                    vis_objs = np.unique(np.load(visibles[seq[self.window_size // 2]]))
-
                     img_obj = {
                         "image_filenames": img_filenames,
                         "depth_filenames": depth_filenames,
                         "camera_filenames": cam_filenames,
                         "range_filenames": range_filenames,
                         "visible_filenames": vis_filenames,
+                        "visible_cats": visibles[seq[self.window_size // 2]],
                         # metadata
                         "scene_name": scene,
                         "height": int(self.H * self.scale),
@@ -194,11 +203,9 @@ class SAILVOSDataset:
                         obj_file = obj[seq[self.window_size // 2]]
                         obj_id = obj_file.split('/')[-2].split('_')[0]
 
-                        if int(obj_id) not in vis_objs:  # check if object is even visible
-                            continue
-
                         anno = {
                             "mask_filename": obj_file,
+                            "obj_id": int(obj_id),
                             "category_id": self.label2idx[self.label_map(obj_file.split('/')[-2])]
                         }
                         annos.append(anno)
@@ -272,17 +279,26 @@ class SAILVOSDataset:
                 "scene_name": data["scene_name"]
             })
 
-            annos = [
-                {
+            vis_objs, counts = np.unique(np.load(data["visible_cats"]), return_counts=True)
+            vis_counts = {ob: cnt for ob, cnt in zip(vis_objs, counts)}
+
+            annos = []
+            for anno in data["annotations"]:
+                bitmask = cv2.imread(anno["mask_filename"])
+
+                # check if object is even visible or is at least OCC_THRESH percent visible
+                if (vis_counts.get(anno["obj_id"], -1) / (bitmask / 255.).sum()) < self.occ_thresh:  
+                    continue
+
+                annos.append({
                     "is_crowd": 0,
                     "bbox_mode": BoxMode.XYXY_ABS,
                     "category_id": anno["category_id"],
                     **{k: v for k, v in zip(
                         ["segmentation", "bbox"],
-                        extract_annotation(anno["mask_filename"], self.scale)
+                        extract_annotation(bitmask, self.scale)
                     )}
-                } for anno in data["annotations"]
-            ]
+                })
             record["annotations"] = annos
             dataset_dicts.append(record)
 
@@ -305,7 +321,8 @@ if __name__.endswith("registry"):
         train_val_split=cfg.SAILVOS.TRAIN_TEST_SPLIT,
         window_size=cfg.SAILVOS.WINDOW_SIZE, 
         frame_strides=cfg.SAILVOS.FRAME_STRIDES,
-        scale=cfg.SAILVOS.SCALE_RESOLUTION
+        scale=cfg.SAILVOS.SCALE_RESOLUTION,
+        occ_thresh=cfg.SAILVOS.OCC_THRESHOLD
     )
     for ds_name in ["sailvos_train", "sailvos_val"]:
         if ds_name in DatasetCatalog.list():

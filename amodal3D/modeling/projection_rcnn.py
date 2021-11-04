@@ -263,8 +263,8 @@ class ProjectionRCNN(nn.Module):
         """
         
         images = [x["images"].to(self.device) for x in batched_inputs]
-        images = ImageList.from_tensors(images, self.backbone.size_divisibility)
-        images.tensor = self.resize_batch(images.tensor)
+        images = self.resize_batch(torch.stack(images))
+        images = ImageList.from_tensors(list(images), self.backbone.size_divisibility)
         if not self.backbone.cfg.DEBUG_BACKBONE:
             images.tensor = (images.tensor - self.pixel_mean) / self.pixel_std
         return images

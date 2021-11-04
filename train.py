@@ -61,7 +61,7 @@ class Trainer(DefaultTrainer):
             )
             visualizer = Visualizer(img[:, :, ::-1], metadata=metadata, scale=0.5)
             out = visualizer.draw_dataset_dict(d)
-            images.append(out.get_image()[:, :, ::-1])
+            images.append(out.get_image())
 
         images = np.array(images)
         _, H, W, C = images.shape
@@ -141,7 +141,7 @@ def main(args):
             cfg, 
             cfg.DATASETS.TEST[0], 
             model, 
-            grid_shape=(2, 2)
+            grid_shape=(1, 1)
         )
 
         return res

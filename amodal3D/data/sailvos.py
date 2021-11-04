@@ -42,6 +42,13 @@ class Amodal3DMapper:
             for cams in dataset_dict["camera_filenames"]
         ])]
 
+        # pop filenames
+        dataset_dict.pop("image_filenames", None)
+        dataset_dict.pop("camera_filenames", None)
+        dataset_dict.pop("depth_filenames", None)
+        dataset_dict.pop("visible_filenames", None)
+        dataset_dict.pop("range_filenames", None)
+
         # augmentation stuff
         images, transforms = apply_augmentations(self.augmentations, images)
         image_shape = dataset_dict["height"], dataset_dict["width"]
